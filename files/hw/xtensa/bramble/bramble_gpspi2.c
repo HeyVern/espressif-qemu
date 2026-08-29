@@ -67,6 +67,7 @@
 #include "hw/sysbus.h"
 #include "hw/irq.h"
 #include "hw/qdev-core.h"
+#include "hw/qdev-properties.h"
 #include "qom/object.h"
 #include "hw/ssi/ssi.h"
 #include "hw/dma/esp_gdma.h"
@@ -150,6 +151,13 @@ struct BrambleGpspi2State {
     MemoryRegion iomem;
     SSIBus *spi;
 
+    /* Board wiring, set with -global so one binary serves every board:
+     * cs-gpio  the pin the firmware drives as the radio's soft chip-select
+     * spi-base the SPI controller window this overlay claims (a bare Arduino
+     *          SPIClass defaults to HSPI, which is SPI3 on the S3). */
+    uint32_t cs_gpio;
+    uint64_t spi_base;
+
     /* SSI_GPIO_CS inputs of the two bus slaves, driven per-transfer from the
      * CS-routing decision (bramble_gpspi2_route). radio_cs -> SX1262 slave,
      * disp_cs -> SSD1680 display slave. */
@@ -217,7 +225,7 @@ static void bramble_gpspi2_route(BrambleGpspi2State *s, int active)
         qemu_set_irq(s->disp_cs, 1);
         return;
     }
-    bool radio_sel = (bramble_gpio_out_level(SX1262_CS_GPIO) == 0);
+    bool radio_sel = (bramble_gpio_out_level(s->cs_gpio) == 0);
     bool disp_sel = !radio_sel && !(s->misc & SPI_MISC_CS0_DIS);
     qemu_set_irq(s->radio_cs, radio_sel ? 0 : 1);
     qemu_set_irq(s->disp_cs, disp_sel ? 0 : 1);
@@ -338,7 +346,7 @@ static void bramble_gpspi2_transfer(BrambleGpspi2State *s)
      * this peripheral transaction ends -- RadioLib clocks a byte per transaction and
      * holds CS low across the whole command. The rising edge is handled by
      * bramble_gpspi2_cs_observer below. */
-    if (bramble_gpio_out_level(SX1262_CS_GPIO) != 0) {
+    if (bramble_gpio_out_level(s->cs_gpio) != 0) {
         bramble_gpspi2_route(s, 0);
     }
 
@@ -439,11 +447,23 @@ static void bramble_gpspi2_instance_init(Object *obj)
     s->spi = ssi_create_bus(DEVICE(s), "spi");
 }
 
+static Property bramble_gpspi2_properties[] = {
+    DEFINE_PROP_UINT32("cs-gpio", BrambleGpspi2State, cs_gpio, SX1262_CS_GPIO),
+    DEFINE_PROP_UINT64("spi-base", BrambleGpspi2State, spi_base, DR_REG_SPI3_BASE),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void bramble_gpspi2_class_init(ObjectClass *klass, void *data)
+{
+    device_class_set_props(DEVICE_CLASS(klass), bramble_gpspi2_properties);
+}
+
 static const TypeInfo bramble_gpspi2_info = {
     .name = TYPE_BRAMBLE_GPSPI2,
     .parent = TYPE_DEVICE,
     .instance_size = sizeof(BrambleGpspi2State),
     .instance_init = bramble_gpspi2_instance_init,
+    .class_init = bramble_gpspi2_class_init,
 };
 
 static void bramble_gpspi2_register_types(void)
@@ -459,7 +479,7 @@ static BrambleGpspi2State *s_gpspi2_for_cs;
 
 static void bramble_gpspi2_cs_observer(int pin, bool level)
 {
-    if (pin == SX1262_CS_GPIO && level && s_gpspi2_for_cs != NULL) {
+    if (s_gpspi2_for_cs != NULL && pin == (int)s_gpspi2_for_cs->cs_gpio && level) {
         bramble_gpspi2_route(s_gpspi2_for_cs, 0);
     }
 }
@@ -473,7 +493,7 @@ void bramble_gpspi2_attach(MemoryRegion *sys_mem, DeviceState *gdma,
     /* Overlay the GPSPI2 window at higher priority than the machine's catch-all
      * IO region (added at priority 0), like bramble_gpio does for GPIO. */
     bramble_overlay_attach(obj, "bramble-gpspi2", &s->iomem, sys_mem,
-                           DR_REG_SPI3_BASE, /* MOBMESH diag: MeshCore uses HSPI */
+                           s->spi_base,
                            "bramble-gpspi2: controller + SX1262 radio + "
                            "SSD1680 display");
 

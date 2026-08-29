@@ -1,9 +1,11 @@
 {
   "board": "xiao_c3",
+  "mcu": "esp32c3",
   "machine": "esp32c3",
   "arch": "riscv32",
+  "binary": "qemu-system-riscv32",
   "mem": "4M",
-  "notes": "No radio model: the bramble device models are xtensa-only, so a c3 boot check exercises everything except the SX1262.",
-  "serial": {"0": "uart0"},
-  "radio": null
+  "serial": ["uart0"],
+  "qemu_args": [],
+  "status": "unsupported: the device models are xtensa-only, and the esp32c3 machine has neither a wired USB console nor an I2C controller. See patches/esp32c3/README.md."
 }

@@ -15,11 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The models still carry board-specific constants (radio CS GPIO, SPI
-          # controller), so an artifact is named for the board it was tuned for,
-          # not just the MCU. Add an entry per board until those become qdev
-          # properties, at which point one MCU artifact covers all of them.
-          - board: heltec_v4_esp32s3
+          # Named for the MCU, not a board: board wiring is set at run time with
+          # -global (see boards/*.json), so one artifact serves every board on
+          # this architecture.
+          - mcu: esp32s3
             target: xtensa-softmmu
             binary: qemu-system-xtensa
     steps:
@@ -42,7 +41,7 @@ jobs:
       - name: Package
         run: |
           src=build/qemu-esp
-          out=${{ matrix.board }}-${GITHUB_REF_NAME:-dev}-linux-x86_64
+          out=${{ matrix.mcu }}-${GITHUB_REF_NAME:-dev}-linux-x86_64
           mkdir -p "$out"
           cp "$src/build/${{ matrix.binary }}" "$out/"
           cp -r "$src/pc-bios" "$out/"
@@ -52,7 +51,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.board }}
+          name: ${{ matrix.mcu }}
           path: '*.tar.zst*'
 
       - name: Publish release
@@ -64,8 +63,9 @@ jobs:
             QEMU ${{ github.ref_name }} (espressif/qemu esp-develop-9.2.2-20260417)
             with the MobMesh device models and fixes applied.
 
-            Assets are named for the board they were built for: the radio models
-            still carry compile-time GPIO and SPI constants.
+            One asset per MCU. Board wiring (radio chip-select pin, SPI
+            controller) is set at run time with -global; boards/*.json in this
+            repo carries the arguments for each board.
           files: |
             *.tar.zst
             *.tar.zst.sha256

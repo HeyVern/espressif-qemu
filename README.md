@@ -1,14 +1,16 @@
-# expressif-qemu
+# espressif-qemu
 
-Pre-built QEMU for emulating MobMesh firmware images. Upstream espressif/qemu does
-not model the peripherals a MeshCore node needs -- there is no LoRa radio, no I2C
-controller on the S3 machine, and the USB serial console is a stub -- so this repo
-carries the missing device models and the fixes, and publishes built binaries as
-releases.
+Pre-built QEMU for emulating ESP32 LoRa boards. Upstream espressif/qemu leaves out
+peripherals such a board needs -- there is no LoRa radio, the esp32s3 machine has no
+I2C controller, and the USB serial console is a stub -- so this repo carries the
+missing device models and the fixes, and publishes built binaries as releases.
 
-Nothing here is a fork. A pinned upstream clone is created at build time, our model
-sources are copied in, and our patches are applied on top; the same `files/` +
-`patches/` arrangement the firmware repo uses for MeshCore.
+The emulator knows nothing about any particular firmware. It provides hardware;
+booting an image and driving its console is the caller's job.
+
+Nothing here is a fork. A pinned upstream clone is created at build time, the model
+sources are copied in, and the patches are applied on top -- a `files/` + `patches/`
+arrangement, so upstream stays upstream.
 
 ## Layout
 
@@ -29,37 +31,50 @@ sources are copied in, and our patches are applied on top; the same `files/` +
 Needs `ninja`, `meson`, glib and pixman headers. On a host without them, `uv venv`
 supplies ninja and meson.
 
-## What the binaries give you
+## Running
 
-`qemu-system-xtensa` covers esp32 and esp32s3; `qemu-system-riscv32` covers esp32c3.
-Two binaries cover every board -- boards differ in run-time configuration, not in
-build, which is what `boards/*.json` records.
-
-With this build a stock `heltec_v4/repeater` image boots, initialises its SX1262
-through RadioLib, mounts SPIFFS, reaches `loop()` in about six seconds, and answers
-its CLI over the emulated USB console:
-
-    ver     -> v1.17.1 (14 Aug 2026) + ota
-    clock   -> 10:53 - 15/5/2024 UTC
-    advert  -> OK - Advert sent
-
-Run it with the USB console on stdio (serial index 2; 0 and 1 are the UARTs):
+One artifact per MCU. Board wiring is set at run time, so the same binary serves
+every board on an architecture.
 
     qemu-system-xtensa -display none -monitor none -machine esp32s3 -m 8M \
       -L pc-bios -drive file=<flash_image.bin>,if=mtd,format=raw \
+      -global driver=bramble.gpspi2,property=cs-gpio,value=8 \
+      -global driver=bramble.gpspi2,property=spi-base,value=0x60025000 \
       -serial null -serial null -serial stdio
 
-`-m 8M` is required for heltec_v4: the app probes for PSRAM.
+`boards/*.json` carries those arguments per board, along with the machine, memory
+size and serial layout. Two things that are easy to get wrong:
+
+- **Use the long `-global` form.** The driver name contains a dot and `-global a.b=c`
+  splits at the first one, so the short form is silently ignored ("invalid class
+  name" on stderr, then default behaviour).
+- **Memory size is not advisory.** A board with PSRAM whose firmware probes for it
+  wedges during init if `-m` is too small.
+
+The USB console is serial index 2; 0 and 1 are the UARTs. A firmware built for
+hardware CDC puts its console there.
+
+## What this gets you
+
+A stock MeshCore `heltec_v4/repeater` image boots on this build, initialises its
+SX1262 through RadioLib, mounts SPIFFS, reaches `loop()` in about six seconds and
+answers its CLI over the emulated USB console. Nothing in this repo knows anything
+about MeshCore; that is a property of the emulated hardware being complete enough,
+and driving the firmware is the caller's job.
 
 ## The models
 
-Board differences that are not run-time configuration -- the radio's chip-select GPIO,
-the SPI controller it hangs off -- are still compile-time constants in the models. A
-second board needs those promoted to qdev properties fed from `boards/*.json`; the
-directory layout does not help with that.
-
 `files/hw/xtensa/bramble/` comes from justinlindh/bramble (MIT) -- GPSPI2, an SX1262
 radio, a GPIO overlay, a SAR ADC and an SSD1680 display -- with our changes on top.
+
+The GPSPI2 model takes two qdev properties, which is what makes one binary serve
+every board:
+
+    cs-gpio    the pin the firmware drives as the radio's soft chip-select   (default 8)
+    spi-base   the SPI controller window the overlay claims       (default 0x60025000)
+
+Both are load-bearing: a wrong `cs-gpio` gives `radio init failed: -2`, and a wrong
+`spi-base` puts the radio on a bus the firmware never talks to.
 
 ## The patches
 
