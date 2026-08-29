@@ -61,7 +61,7 @@ jobs:
           name: espressif-qemu ${{ github.ref_name }}
           body: |
             QEMU ${{ github.ref_name }} (espressif/qemu esp-develop-9.2.2-20260417)
-            with the MobMesh device models and fixes applied.
+            with the LoRa device models and fixes applied.
 
             One asset per MCU. Board wiring (radio chip-select pin, SPI
             controller) is set at run time with -global; boards/*.json in this

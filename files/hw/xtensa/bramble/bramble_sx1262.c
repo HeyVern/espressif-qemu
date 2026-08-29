@@ -510,7 +510,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
 
 static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
 {
-    /* MOBMESH: RadioLib reads the version string at 0x0320 and refuses to init if it
+    /* RadioLib reads the version string at 0x0320 and refuses to init if it
      * does not name the part. Real silicon ships it; a zeroed register file does not. */
     {
         BrambleSx1262State *st = BRAMBLE_SX1262(dev);

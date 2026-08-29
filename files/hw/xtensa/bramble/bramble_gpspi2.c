@@ -342,7 +342,7 @@ static void bramble_gpspi2_transfer(BrambleGpspi2State *s)
         }
     }
 
-    /* MOBMESH: the frame ends when the driver raises the radio's soft CS, not when
+    /* The frame ends when the driver raises the radio's soft CS, not when
      * this peripheral transaction ends -- RadioLib clocks a byte per transaction and
      * holds CS low across the whole command. The rising edge is handled by
      * bramble_gpspi2_cs_observer below. */
@@ -473,7 +473,7 @@ static void bramble_gpspi2_register_types(void)
 
 type_init(bramble_gpspi2_register_types)
 
-/* MOBMESH: released when the driver raises the soft CS, which resets the slave's
+/* Released when the driver raises the soft CS, which resets the slave's
  * byte cursor exactly once per command frame. */
 static BrambleGpspi2State *s_gpspi2_for_cs;
 

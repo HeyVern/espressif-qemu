@@ -45,7 +45,7 @@ void bramble_attach(MemoryRegion *sys_mem, DeviceState *gdma, DeviceState *intc)
     /* LEDC buzzer overlay + the LED/vibra/buzzer -> emu-link `ind` bridge. */
     bramble_indicators_attach(sys_mem);
 
-    /* MOBMESH: after indicators, so the GPIO out-observer slot lands here -- the
+    /* After indicators, so the GPIO out-observer slot lands here -- the
      * radio's soft CS edge is what frames an SPI command. */
     bramble_gpspi2_attach(sys_mem, gdma, intc);
 
