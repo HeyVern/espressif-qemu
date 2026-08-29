@@ -61,10 +61,16 @@ hardware CDC puts its console there.
 
 ## What this gets you
 
-Enough emulated hardware for a real firmware image to run: a stock heltec_v4 LoRa
-image boots on this build, brings up its SX1262 through RadioLib, mounts SPIFFS,
+Enough emulated hardware for a real firmware image to run. On esp32s3, a stock
+heltec_v4 LoRa image boots, brings up its SX1262 through RadioLib, mounts SPIFFS,
 reaches its main loop in about six seconds and answers commands over the emulated
-USB console.
+USB console. On esp32c3, a stock XIAO image boots, mounts SPIFFS and brings up its
+radio; its sensor scan is slow until that machine models I2C.
+
+A release build sends its console to USB, so UART0 is silent and a log can look like
+a hang when the firmware is running fine. Building the image with the console on
+UART0 and RadioLib's SPI tracing on is the fastest way to see what a guest is really
+doing.
 
 ## The models
 

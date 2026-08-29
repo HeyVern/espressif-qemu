@@ -21,6 +21,9 @@ jobs:
           - mcu: esp32s3
             target: xtensa-softmmu
             binary: qemu-system-xtensa
+          - mcu: esp32c3
+            target: riscv32-softmmu
+            binary: qemu-system-riscv32
     steps:
       - uses: actions/checkout@v4
 

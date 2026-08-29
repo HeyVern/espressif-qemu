@@ -7,6 +7,16 @@
   "mem": null,
   "mem_note": "Omit -m: the esp32c3 machine sets its own 400 KB, matching the chip's SRAM.",
   "serial": ["uart0", "uart1", "usb-serial-jtag"],
-  "qemu_args": [],
-  "status": "boots to application code and mounts SPIFFS; no radio model yet, so a firmware that requires one resets in a loop."
+  "qemu_args": [
+    "-global", "driver=bramble.gpio,property=strap-mode,value=8",
+    "-global", "driver=bramble.gpspi2,property=cs-gpio,value=6",
+    "-global", "driver=bramble.gpspi2,property=spi-base,value=0x60024000"
+  ],
+  "qemu_args_note": "strap-mode is not optional: 0x8 selects SPI boot on this chip and the 0x4 default drops the ROM into download mode.",
+  "pins": {
+    "nss": 6, "dio1": 3, "reset": 4, "busy": 5, "rxen": 7,
+    "sck": 8, "miso": 9, "mosi": 10,
+    "note": "GPIO9 carries MISO and the boot strap on this board."
+  },
+  "status": "boots, mounts SPIFFS and brings up the radio; the sensor scan is slow until the machine models I2C."
 }
