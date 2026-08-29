@@ -16,3 +16,15 @@ xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
   'bramble_indicators.c',
   'bramble_emulink.c',
 ))
+
+# The radio path is SoC-independent: the GPIO overlay, the GPSPI2 controller and
+# the SX1262 slave use register layouts the esp32c3 shares. Only the machine that
+# attaches them differs.
+riscv_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
+  'bramble_scaffold.c',
+  'bramble_gpio.c',
+  'bramble_gpspi2.c',
+  'bramble_sx1262.c',
+  'bramble_ssd1680.c',
+  'bramble_emulink.c',
+))

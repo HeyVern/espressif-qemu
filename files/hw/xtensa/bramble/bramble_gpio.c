@@ -38,12 +38,18 @@
 #include "hw/sysbus.h"
 #include "hw/irq.h"
 #include "hw/qdev-core.h"
+#include "hw/qdev-properties.h"
 #include "qom/object.h"
 #include "exec/address-spaces.h"
 #include "hw/xtensa/bramble_gpio.h"
 #include "hw/xtensa/bramble_scaffold.h"
 #include "hw/misc/esp32s3_reg.h"
+/* Pulls in target/xtensa/cpu.h, which cannot be compiled into a riscv32
+ * target. The esp32c3 machine attaches these models with intc == NULL, so
+ * the interrupt path this supplies is unused there. */
+#ifdef CONFIG_XTENSA_ESP32S3
 #include "hw/xtensa/esp32s3_intc.h"
+#endif
 
 /* GPIO peripheral register offsets (soc/gpio_reg.h, esp32s3). Banked: the
  * plain registers cover pins 0..31, the "1" variants cover pins 32..48. */
@@ -130,6 +136,11 @@ struct BrambleGpioState {
     uint32_t out[2];      /* driven output level, as the OUT registers hold */
     uint32_t enable[2];   /* output-enable, tracked for completeness */
     uint32_t in[2];       /* input level served to GPIO_IN reads */
+
+    /* Boot-strap value the ROM reads. Chip-specific: 0x4 selects SPI boot on the
+     * esp32s3, 0x8 on the esp32c3. A wrong value drops the ROM into download
+     * mode and the image never runs. */
+    uint32_t strap_mode;
     uint32_t status[2];   /* latched interrupt status */
 
     /* Interrupt-matrix input for ETS_GPIO_INTR_SOURCE (a real edge would
@@ -229,7 +240,7 @@ static uint64_t bramble_gpio_read(void *opaque, hwaddr addr, unsigned int size)
     case R_GPIO_OUT1:     return s->out[1];
     case R_GPIO_ENABLE:   return s->enable[0];
     case R_GPIO_ENABLE1:  return s->enable[1];
-    case R_GPIO_STRAP:    return BRAMBLE_STRAP_MODE_FLASH_BOOT;
+    case R_GPIO_STRAP:    return s->strap_mode;
     case R_GPIO_IN:       return s->in[0];
     case R_GPIO_IN1:      return s->in[1];
     case R_GPIO_STATUS:   return s->status[0];
@@ -404,11 +415,23 @@ static void bramble_gpio_instance_init(Object *obj)
     object_property_add_bool(obj, "down", bramble_get_down, bramble_set_down);
 }
 
+static Property bramble_gpio_properties[] = {
+    DEFINE_PROP_UINT32("strap-mode", BrambleGpioState, strap_mode,
+                       BRAMBLE_STRAP_MODE_FLASH_BOOT),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static void bramble_gpio_class_init(ObjectClass *klass, void *data)
+{
+    device_class_set_props(DEVICE_CLASS(klass), bramble_gpio_properties);
+}
+
 static const TypeInfo bramble_gpio_info = {
     .name = TYPE_BRAMBLE_GPIO,
     .parent = TYPE_DEVICE,
     .instance_size = sizeof(BrambleGpioState),
     .instance_init = bramble_gpio_instance_init,
+    .class_init = bramble_gpio_class_init,
 };
 
 static void bramble_gpio_register_types(void)
@@ -433,6 +456,8 @@ void bramble_gpio_attach(MemoryRegion *sys_mem, DeviceState *intc)
 
     s_bramble_gpio = s;
     if (intc) {
+#ifdef CONFIG_XTENSA_ESP32S3
         s->intr = qdev_get_gpio_in(intc, ETS_GPIO_INTR_SOURCE);
+#endif
     }
 }

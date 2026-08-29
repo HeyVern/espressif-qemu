@@ -77,7 +77,12 @@
 #include "hw/xtensa/bramble_sx1262.h"
 #include "hw/xtensa/bramble_ssd1680.h"
 #include "hw/misc/esp32s3_reg.h"
+/* Pulls in target/xtensa/cpu.h, which cannot be compiled into a riscv32
+ * target. The esp32c3 machine attaches these models with intc == NULL, so
+ * the interrupt path this supplies is unused there. */
+#ifdef CONFIG_XTENSA_ESP32S3
 #include "hw/xtensa/esp32s3_intc.h"
+#endif
 
 /* GPSPI2 register offsets (soc/spi_reg.h, esp32s3: REG_SPI_BASE(2) window).
  * NB: this is the GENERAL-PURPOSE SPI register map, distinct from the flash
@@ -501,7 +506,9 @@ void bramble_gpspi2_attach(MemoryRegion *sys_mem, DeviceState *gdma,
         s->gdma = ESP_GDMA(gdma);
     }
     if (intc) {
+#ifdef CONFIG_XTENSA_ESP32S3
         s->intr = qdev_get_gpio_in(intc, ETS_SPI2_INTR_SOURCE);
+#endif
     }
 
     /* Attach both bus slaves and capture their CS inputs for routing. Both are

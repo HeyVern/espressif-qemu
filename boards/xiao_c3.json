@@ -4,8 +4,9 @@
   "machine": "esp32c3",
   "arch": "riscv32",
   "binary": "qemu-system-riscv32",
-  "mem": "4M",
-  "serial": ["uart0"],
+  "mem": null,
+  "mem_note": "Omit -m: the esp32c3 machine sets its own 400 KB, matching the chip's SRAM.",
+  "serial": ["uart0", "uart1", "usb-serial-jtag"],
   "qemu_args": [],
-  "status": "unsupported: the device models are xtensa-only, and the esp32c3 machine has neither a wired USB console nor an I2C controller. See patches/esp32c3/README.md."
+  "status": "boots to application code and mounts SPIFFS; no radio model yet, so a firmware that requires one resets in a loop."
 }
