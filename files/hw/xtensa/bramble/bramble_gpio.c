@@ -241,8 +241,11 @@ static uint64_t bramble_gpio_read(void *opaque, hwaddr addr, unsigned int size)
     case R_GPIO_ENABLE:   return s->enable[0];
     case R_GPIO_ENABLE1:  return s->enable[1];
     case R_GPIO_STRAP:    return s->strap_mode;
-    case R_GPIO_IN:       return s->in[0];
-    case R_GPIO_IN1:      return s->in[1];
+    /* A pin driven as an output reads back the level it is driving: the input path
+     * stays connected on silicon, and firmware does read its own outputs. Injected
+     * input levels still win for pins the firmware is not driving. */
+    case R_GPIO_IN:       return (s->in[0] & ~s->enable[0]) | (s->out[0] & s->enable[0]);
+    case R_GPIO_IN1:      return (s->in[1] & ~s->enable[1]) | (s->out[1] & s->enable[1]);
     case R_GPIO_STATUS:   return s->status[0];
     case R_GPIO_STATUS1:  return s->status[1];
     /* CPU-routed interrupt status the ISR polls: mirror the latched status so a
