@@ -31,5 +31,5 @@
     "mosi": 10,
     "note": "GPIO9 carries MISO and the boot strap on this board."
   },
-  "status": "boots, mounts SPIFFS and brings up the radio; the console is not yet reachable because the I2C controller does not complete a transaction for this chip's driver, so the firmware blocks in its sensor scan."
+  "status": "boots, mounts SPIFFS, brings up the radio and answers its CLI over the emulated USB console."
 }

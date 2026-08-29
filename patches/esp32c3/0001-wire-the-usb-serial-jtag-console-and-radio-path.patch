@@ -1,5 +1,5 @@
 diff --git a/hw/riscv/esp32c3.c b/hw/riscv/esp32c3.c
-index ed698fb..09458c3 100644
+index ed698fb..8d483ab 100644
 --- a/hw/riscv/esp32c3.c
 +++ b/hw/riscv/esp32c3.c
 @@ -47,6 +47,9 @@
@@ -38,7 +38,7 @@ index ed698fb..09458c3 100644
 +     * device that ACKs is initialised for real, and the upstream I2C model then
 +     * faults the guest on the first data phase. */
      {
-+        qdev_prop_set_bit(DEVICE(&ms->i2c), "new-opcode-map", true);
++        qdev_prop_set_bit(DEVICE(&ms->i2c), "new-register-map", true);
 +        qdev_realize(DEVICE(&ms->i2c), &ms->periph_bus, &error_fatal);
 +        MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->i2c), 0);
 +        memory_region_add_subregion_overlap(sys_mem, DR_REG_I2C_EXT_BASE, mr, 0);
