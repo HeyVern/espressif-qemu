@@ -41,7 +41,7 @@ index 4a24a04..2e62680 100644
 +     * 128-address probe then NACKs at once instead of timing out per address,
 +     * which is the difference between a ~200 s and a ~10 s boot. Leave the buses
 +     * empty: a device that ACKs is initialised for real, and the ESP32 I2C model
-+     * faults the guest on the first data phase (espressif/qemu#110). */
++     * faults the guest on the first data phase. */
 +    for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
 +        const hwaddr i2c_base[] = { DR_REG_I2C_EXT_BASE, DR_REG_I2C1_EXT_BASE };
 +        qdev_realize(DEVICE(&s->i2c[i]), &s->periph_bus, &error_fatal);

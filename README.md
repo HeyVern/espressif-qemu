@@ -95,5 +95,5 @@ Two things to know before touching the machine patches:
   wired from the enum is asserted on a line nothing reads, and fails silently.
 - **The I2C buses are left empty on purpose.** Empty means the firmware's 128-address
   probe NACKs immediately, which is the difference between a 200-second and a
-  6-second boot. A device that ACKs gets initialised for real, and espressif/qemu#110
-  then faults the guest on the first data phase.
+  6-second boot. A device that ACKs gets initialised for real, and the upstream I2C
+  model then faults the guest on the first data phase.
