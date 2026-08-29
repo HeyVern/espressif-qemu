@@ -1,0 +1,23 @@
+{
+  "board": "heltec_v4",
+  "machine": "esp32s3",
+  "arch": "xtensa",
+  "mem": "8M",
+  "notes": "PSRAM is probed at boot; a smaller -m wedges init.",
+  "serial": {
+    "0": "uart0",
+    "1": "uart1",
+    "2": "usb-serial-jtag console -- where the CLI lives when ARDUINO_USB_MODE=1"
+  },
+  "radio": {
+    "model": "sx1262",
+    "spi_base": "DR_REG_SPI3_BASE",
+    "cs_gpio": 8,
+    "note": "MeshCore's bare SPIClass defaults to HSPI, which is SPI3 on the S3."
+  },
+  "i2c": {
+    "controllers": 2,
+    "devices": [],
+    "note": "Buses stay empty on purpose: a device that ACKs is initialised for real and espressif/qemu#110 then faults the guest."
+  }
+}

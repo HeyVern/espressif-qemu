@@ -1,0 +1,27 @@
+diff --git a/hw/ssi/esp32s3_spi.c b/hw/ssi/esp32s3_spi.c
+index 90250e7..53a27ef 100644
+--- a/hw/ssi/esp32s3_spi.c
++++ b/hw/ssi/esp32s3_spi.c
+@@ -39,6 +39,7 @@ enum {
+     CMD_WREN = 0x6,
+     CMD_READ = 0x03,
+     CMD_HPM = 0xa3,
++    CMD_QIOR = 0xeb,
+ };
+ 
+ 
+@@ -261,6 +262,14 @@ static void esp32s3_spi_begin_transaction(ESP32S3SpiState *s)
+         /* Only calculate and include dummy cycles when the USR_DUMMY bit is set! */
+         if (s->mem_user & R_SPI_MEM_USER_USR_DUMMY_MASK) {
+             esp32s3_spi_get_dummy(s, &t.dummy_bytes);
++            /* A dummy cycle on a quad-I/O command clocks 4 bits, not 1. The emulated
++             * flash counts dummy cycles in bytes, so the single-line conversion above
++             * makes it consume data bytes as dummies and shift everything it returns. */
++            if (t.cmd == CMD_QIOR) {
++                const uint32_t cycles =
++                    FIELD_EX32(s->mem_user1, SPI_MEM_USER1, USR_DUMMY_CYCLELEN) + 1;
++                t.dummy_bytes = (cycles * 4 + 7) / 8;
++            }
+         }
+     }
+ 

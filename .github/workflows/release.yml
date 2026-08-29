@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: xtensa-softmmu
+            binary: qemu-system-xtensa
+          - target: riscv32-softmmu
+            binary: qemu-system-riscv32
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build meson libglib2.0-dev libpixman-1-dev \
+            libgcrypt20-dev python3-venv flex bison zstd
+
+      - name: Bootstrap patched tree
+        run: scripts/bootstrap.sh
+
+      - name: Build ${{ matrix.target }}
+        run: scripts/build.sh ${{ matrix.target }}
+
+      # pc-bios ships the ROMs the machines need at run time, so it travels with
+      # the binary rather than being fetched separately.
+      - name: Package
+        run: |
+          src=build/qemu-esp
+          out=${{ matrix.binary }}-${GITHUB_REF_NAME:-dev}-linux-x86_64
+          mkdir -p "$out"
+          cp "$src/build/${{ matrix.binary }}" "$out/"
+          cp -r "$src/pc-bios" "$out/"
+          cp qemu.lock "$out/"
+          tar -C . -caf "$out.tar.zst" "$out"
+          sha256sum "$out.tar.zst" > "$out.tar.zst.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: '*.tar.zst*'
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.zst
+            *.tar.zst.sha256

@@ -1,0 +1,237 @@
+diff --git a/hw/misc/esp32c3_jtag.c b/hw/misc/esp32c3_jtag.c
+index 82ee697..d6bd534 100644
+--- a/hw/misc/esp32c3_jtag.c
++++ b/hw/misc/esp32c3_jtag.c
+@@ -13,20 +13,110 @@
+ #include "qemu/error-report.h"
+ #include "hw/hw.h"
+ #include "hw/sysbus.h"
++#include "hw/qdev-properties.h"
++#include "hw/qdev-properties-system.h"
++#include "chardev/char-fe.h"
++#include "hw/irq.h"
+ #include "hw/misc/esp32c3_jtag.h"
+ 
++/* The guest writes console bytes into EP1 and sets WR_DONE to release the burst; it
++ * reads EP1 while OUT_EP_DATA_AVAIL is set. Both directions are bridged to a chardev,
++ * so the SoC's native USB console reaches -serial like any UART would. */
++
++static void esp32c3_jtag_update_irq(ESP32C3UsbJtagState *s)
++{
++    s->int_raw = ESP32C3_JTAG_INT_SOF | ESP32C3_JTAG_INT_IN_EMPTY |
++                 (s->rx_len ? ESP32C3_JTAG_INT_OUT_RECV : 0);
++    qemu_set_irq(s->irq, (s->int_raw & s->int_ena) ? 1 : 0);
++}
++
++static void esp32c3_jtag_flush_tx(ESP32C3UsbJtagState *s)
++{
++    if (s->tx_len == 0) {
++        return;
++    }
++    qemu_chr_fe_write_all(&s->chr, s->tx, s->tx_len);
++    s->tx_len = 0;
++}
+ 
+ static uint64_t esp32c3_jtag_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     ESP32C3UsbJtagState *s = ESP32C3_JTAG(opaque);
+-    (void) s;
+-    return 0;
++
++    
++    switch (addr) {
++    case ESP32C3_JTAG_EP1:
++        if (s->rx_len == 0) {
++            return 0;
++        }
++        {
++            uint8_t b = s->rx[s->rx_head];
++            s->rx_head = (s->rx_head + 1) % ESP32C3_JTAG_RX_FIFO_SIZE;
++            s->rx_len--;
++            return b;
++        }
++    case ESP32C3_JTAG_EP1_CONF:
++        /* Always accept writes; report readable data when the FIFO has any. */
++        return ESP32C3_JTAG_CONF_IN_FREE |
++               (s->rx_len ? ESP32C3_JTAG_CONF_OUT_AVAIL : 0);
++    case ESP32C3_JTAG_INT_RAW:
++        /* Stand in for a host: SOF is always freshly raised, so the guest's tick hook
++         * sees a connected bus and HWCDC transmits instead of discarding. */
++        return s->int_raw | ESP32C3_JTAG_INT_SOF | ESP32C3_JTAG_INT_IN_EMPTY;
++    case ESP32C3_JTAG_INT_ST:
++        return (s->int_raw | ESP32C3_JTAG_INT_SOF | ESP32C3_JTAG_INT_IN_EMPTY) & s->int_ena;
++    case ESP32C3_JTAG_INT_ENA:
++        return s->int_ena;
++    default:
++        return 0;
++    }
+ }
+ 
+-static void esp32c3_jtag_write(void *opaque, hwaddr addr, uint64_t value, unsigned int size)
++static void esp32c3_jtag_write(void *opaque, hwaddr addr, uint64_t value,
++                               unsigned int size)
+ {
+     ESP32C3UsbJtagState *s = ESP32C3_JTAG(opaque);
+-    (void) s;
++
++    switch (addr) {
++    case ESP32C3_JTAG_EP1:
++        if (s->tx_len < ESP32C3_JTAG_TX_FIFO_SIZE) {
++            s->tx[s->tx_len++] = value & 0xff;
++        }
++        if (s->tx_len == ESP32C3_JTAG_TX_FIFO_SIZE) {
++            esp32c3_jtag_flush_tx(s);
++        }
++        break;
++    case ESP32C3_JTAG_EP1_CONF:
++        if (value & ESP32C3_JTAG_CONF_WR_DONE) {
++            esp32c3_jtag_flush_tx(s);
++        }
++        break;
++    case ESP32C3_JTAG_INT_ENA:
++        s->int_ena = value;
++        esp32c3_jtag_update_irq(s);
++        break;
++    case ESP32C3_JTAG_INT_CLR:
++        esp32c3_jtag_update_irq(s);
++        break;
++    default:
++        break;
++    }
++}
++
++static int esp32c3_jtag_can_receive(void *opaque)
++{
++    ESP32C3UsbJtagState *s = ESP32C3_JTAG(opaque);
++    return ESP32C3_JTAG_RX_FIFO_SIZE - s->rx_len;
++}
++
++static void esp32c3_jtag_receive(void *opaque, const uint8_t *buf, int size)
++{
++    ESP32C3UsbJtagState *s = ESP32C3_JTAG(opaque);
++    for (int i = 0; i < size && s->rx_len < ESP32C3_JTAG_RX_FIFO_SIZE; i++) {
++        s->rx[(s->rx_head + s->rx_len) % ESP32C3_JTAG_RX_FIFO_SIZE] = buf[i];
++        s->rx_len++;
++    }
++    esp32c3_jtag_update_irq(s);
+ }
+ 
+ static const MemoryRegionOps esp32c3_jtag_ops = {
+@@ -37,14 +127,17 @@ static const MemoryRegionOps esp32c3_jtag_ops = {
+ 
+ static void esp32c3_jtag_reset_hold(Object *obj, ResetType type)
+ {
+-    (void) obj;
+-    (void) type;
++    ESP32C3UsbJtagState *s = ESP32C3_JTAG(obj);
++    s->tx_len = 0;
++    s->rx_head = 0;
++    s->rx_len = 0;
+ }
+ 
+ static void esp32c3_jtag_realize(DeviceState *dev, Error **errp)
+ {
+-    (void) dev;
+-    (void) errp;
++    ESP32C3UsbJtagState *s = ESP32C3_JTAG(dev);
++    qemu_chr_fe_set_handlers(&s->chr, esp32c3_jtag_can_receive,
++                             esp32c3_jtag_receive, NULL, NULL, s, NULL, true);
+ }
+ 
+ static void esp32c3_jtag_init(Object *obj)
+@@ -55,15 +148,22 @@ static void esp32c3_jtag_init(Object *obj)
+     memory_region_init_io(&s->iomem, obj, &esp32c3_jtag_ops, s,
+                           TYPE_ESP32C3_JTAG, ESP32C3_JTAG_REGS_SIZE);
+     sysbus_init_mmio(sbd, &s->iomem);
++    sysbus_init_irq(sbd, &s->irq);
+ }
+ 
++static Property esp32c3_jtag_properties[] = {
++    DEFINE_PROP_CHR("chardev", ESP32C3UsbJtagState, chr),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
+ static void esp32c3_jtag_class_init(ObjectClass *klass, void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+     ResettableClass *rc = RESETTABLE_CLASS(klass);
+ 
+-    rc->phases.hold = esp32c3_jtag_reset_hold;
+     dc->realize = esp32c3_jtag_realize;
++    device_class_set_props(dc, esp32c3_jtag_properties);
++    rc->phases.hold = esp32c3_jtag_reset_hold;
+ }
+ 
+ static const TypeInfo esp32c3_jtag_info = {
+@@ -71,12 +171,12 @@ static const TypeInfo esp32c3_jtag_info = {
+     .parent = TYPE_SYS_BUS_DEVICE,
+     .instance_size = sizeof(ESP32C3UsbJtagState),
+     .instance_init = esp32c3_jtag_init,
+-    .class_init = esp32c3_jtag_class_init
++    .class_init = esp32c3_jtag_class_init,
+ };
+ 
+-static void esp32c3_jtag_types(void)
++static void esp32c3_jtag_register_types(void)
+ {
+     type_register_static(&esp32c3_jtag_info);
+ }
+ 
+-type_init(esp32c3_jtag_types)
++type_init(esp32c3_jtag_register_types)
+diff --git a/include/hw/misc/esp32c3_jtag.h b/include/hw/misc/esp32c3_jtag.h
+index 8ac6ebb..8868fa1 100644
+--- a/include/hw/misc/esp32c3_jtag.h
++++ b/include/hw/misc/esp32c3_jtag.h
+@@ -12,15 +12,50 @@
+ #include "hw/hw.h"
+ #include "hw/sysbus.h"
+ #include "hw/registerfields.h"
++#include "chardev/char-fe.h"
+ 
+ #define TYPE_ESP32C3_JTAG "misc.esp32c3.usb_serial_jtag"
+ #define ESP32C3_JTAG(obj) OBJECT_CHECK(ESP32C3UsbJtagState, (obj), TYPE_ESP32C3_JTAG)
+ 
+ #define ESP32C3_JTAG_REGS_SIZE (0x84)
+ 
++/* EP1 is the byte FIFO, EP1_CONF the handshake: bit 0 WR_DONE (guest has finished a
++ * write burst), bit 1 IN_EP_DATA_FREE (host can accept more), bit 2 OUT_EP_DATA_AVAIL. */
++#define ESP32C3_JTAG_EP1            0x00
++#define ESP32C3_JTAG_EP1_CONF       0x04
++#define ESP32C3_JTAG_CONF_WR_DONE   (1 << 0)
++#define ESP32C3_JTAG_CONF_IN_FREE   (1 << 1)
++#define ESP32C3_JTAG_CONF_OUT_AVAIL (1 << 2)
++
++#define ESP32C3_JTAG_INT_RAW        0x08
++#define ESP32C3_JTAG_INT_ST         0x0c
++#define ESP32C3_JTAG_INT_ENA        0x10
++#define ESP32C3_JTAG_INT_CLR        0x14
++/* SOF is bit 1. A full-speed host emits one every 1 ms; the guest polls this bit to
++ * decide a host is attached and only then does it transmit. */
++#define ESP32C3_JTAG_INT_SOF        (1 << 1)
++/* Raised when the host has delivered a packet the guest has not read yet. */
++#define ESP32C3_JTAG_INT_OUT_RECV   (1 << 2)
++/* Raised while the IN FIFO can take more; the guest's ISR is what moves queued
++ * console output into EP1, and it disables this bit itself once the queue drains. */
++#define ESP32C3_JTAG_INT_IN_EMPTY   (1 << 3)
++
++#define ESP32C3_JTAG_TX_FIFO_SIZE   64
++#define ESP32C3_JTAG_RX_FIFO_SIZE   256
+ 
+ typedef struct ESP32C3UsbJtagState {
+     SysBusDevice parent_object;
+     MemoryRegion iomem;
+-} ESP32C3UsbJtagState;
++    CharBackend chr;
+ 
++    uint8_t tx[ESP32C3_JTAG_TX_FIFO_SIZE];
++    uint32_t tx_len;
++
++    uint8_t rx[ESP32C3_JTAG_RX_FIFO_SIZE];
++    uint32_t rx_head;
++    uint32_t rx_len;
++
++    qemu_irq irq;
++    uint32_t int_ena;
++    uint32_t int_raw;
++} ESP32C3UsbJtagState;

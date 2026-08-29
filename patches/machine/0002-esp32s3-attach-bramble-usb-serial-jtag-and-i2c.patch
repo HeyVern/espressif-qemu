@@ -1,0 +1,98 @@
+diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
+index 4a24a04..2e62680 100644
+--- a/hw/xtensa/esp32s3.c
++++ b/hw/xtensa/esp32s3.c
+@@ -22,6 +22,7 @@
+ #include "hw/misc/unimp.h"
+ #include "hw/irq.h"
+ #include "hw/i2c/i2c.h"
++#include "hw/i2c/esp32_i2c.h"
+ #include "hw/qdev-properties.h"
+ 
+ #include "qemu/osdep.h"
+@@ -68,7 +69,14 @@
+ #include "cpu_esp32s3.h"
+ 
+ #include "hw/misc/esp32c3_jtag.h"
++#define ETS_USB_SERIAL_JTAG_INTR_SOURCE 96
++#define ESP32S3_I2C_COUNT 2
++/* Interrupt-matrix inputs are numbered by map-register offset, which stops
++ * tracking the ETS_* enum partway down the list: I2C_EXT0 is 0x0A8/4 and the
++ * USB block 0x180/4, four and five past their enum positions. */
++#define ESP32S3_I2C_EXT0_INTR_SOURCE 42
+ #include "hw/display/esp_rgb.h"
++#include "hw/xtensa/bramble_attach.h"
+ 
+ #define TYPE_ESP32S3_SOC "xtensa.esp32s3"
+ #define ESP32S3_SOC(obj) OBJECT_CHECK(Esp32s3SocState, (obj), TYPE_ESP32S3_SOC)
+@@ -122,6 +130,7 @@ typedef struct Esp32s3SocState {
+     XtensaCPU cpu[ESP32S3_CPU_COUNT];
+     Esp32s3IntMatrixState intmatrix;
+     ESP32S3UARTState uart[ESP32S3_UART_COUNT];
++    Esp32I2CState i2c[ESP32S3_I2C_COUNT];
+     ESP32S3GPIOState gpio;
+     Esp32s3RngState rng;
+     Esp32S3TWAIState twai;
+@@ -425,6 +434,19 @@ static void esp32s3_soc_realize(DeviceState *dev, Error **errp)
+                            qdev_get_gpio_in(intmatrix_dev, ETS_UART0_INTR_SOURCE + i));
+     }
+ 
++    /* Both controllers are present with nothing on either bus. The firmware's
++     * 128-address probe then NACKs at once instead of timing out per address,
++     * which is the difference between a ~200 s and a ~10 s boot. Leave the buses
++     * empty: a device that ACKs is initialised for real, and the ESP32 I2C model
++     * faults the guest on the first data phase (espressif/qemu#110). */
++    for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
++        const hwaddr i2c_base[] = { DR_REG_I2C_EXT_BASE, DR_REG_I2C1_EXT_BASE };
++        qdev_realize(DEVICE(&s->i2c[i]), &s->periph_bus, &error_fatal);
++        esp32s3_soc_add_periph_device(sys_mem, &s->i2c[i], i2c_base[i]);
++        sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2c[i]), 0,
++                           qdev_get_gpio_in(intmatrix_dev, ESP32S3_I2C_EXT0_INTR_SOURCE + i));
++    }
++
+     qdev_realize(DEVICE(&s->sdmmc), &s->periph_bus, &error_fatal);
+     esp32s3_soc_add_periph_device(sys_mem, &s->sdmmc, DR_REG_SDMMC_BASE);
+     sysbus_connect_irq(SYS_BUS_DEVICE(&s->sdmmc), 0,
+@@ -532,6 +554,11 @@ static void esp32s3_soc_init(Object *obj)
+         object_initialize_child(obj, name, &s->uart[i], TYPE_ESP32S3_UART);
+     }
+ 
++    for (int i = 0; i < ESP32S3_I2C_COUNT; ++i) {
++        snprintf(name, sizeof(name), "i2c%d", i);
++        object_initialize_child(obj, name, &s->i2c[i], TYPE_ESP32_I2C);
++    }
++
+     object_property_add_alias(obj, "serial0", OBJECT(&s->uart[0]), "chardev");
+     object_property_add_alias(obj, "serial1", OBJECT(&s->uart[1]), "chardev");
+     // object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
+@@ -670,7 +697,11 @@ static void esp32s3_machine_init(MachineState *machine)
+ 
+     /* USB Serial JTAG realization */
+     {
++        qdev_prop_set_chr(DEVICE(&ss->jtag), "chardev", serial_hd(2));
+         sysbus_realize(SYS_BUS_DEVICE(&ss->jtag), &error_fatal);
++        sysbus_connect_irq(SYS_BUS_DEVICE(&ss->jtag), 0,
++                           qdev_get_gpio_in(DEVICE(&ss->intmatrix),
++                                            ETS_USB_SERIAL_JTAG_INTR_SOURCE));
+         MemoryRegion *mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ss->jtag), 0);
+         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);
+     }
+@@ -878,6 +909,18 @@ static void esp32s3_machine_init(MachineState *machine)
+     /* Need MMU initialized prior to ELF loading,
+      * so that ELF gets loaded into virtual addresses
+      */
++
++    /* Bramble Phase 2 emulator device models. A single fan-out call attaches
++     * every bramble overlay/model (GPIO, GPSPI2 controller + SX1262/SSD1680 SSI
++     * slaves, SAR ADC, LEDC indicators, emu-link bridge) to the running machine.
++     * Placed here, at the end of machine init, so the GDMA and interrupt matrix
++     * the models need are already realized. Esp32s3SocState is private to
++     * esp32s3.c, so the handles those models need are threaded through
++     * bramble_attach's parameters rather than exported. See
++     * hw/xtensa/bramble/bramble_attach.c. */
++    bramble_attach(get_system_memory(), DEVICE(&ss->gdma),
++                   DEVICE(&ss->intmatrix));
++
+     cpu_reset(CPU(&ss->cpu[0]));
+ 
+     const char *load_elf_filename = NULL;
