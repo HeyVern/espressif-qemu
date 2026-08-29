@@ -27,6 +27,15 @@ patches applied on top, so upstream stays upstream and our changes stay reviewab
 Needs `ninja`, `meson`, glib and pixman headers. On a host without them, `uv venv`
 supplies ninja and meson.
 
+## Verifying a download
+
+GitHub records a digest for each release asset, computed from what it stored:
+
+    gh api repos/<owner>/espressif-qemu/releases/tags/<tag> \
+      --jq '.assets[] | select(.name|endswith(".tar.zst")) | .digest'
+
+Pin that value where the release is consumed, so a replaced asset fails loudly.
+
 ## Running
 
 One artifact per MCU. Board wiring is set at run time, so the same binary serves
