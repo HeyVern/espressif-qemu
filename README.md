@@ -15,7 +15,9 @@ sources are copied in, and our patches are applied on top; the same `files/` +
     qemu.lock            upstream repo, tag and base commit
     files/               device model sources, mirroring the upstream root
     patches/upstream/    fixes bound for espressif/qemu
-    patches/machine/     machine wiring that is ours to keep
+    patches/common/      device models and build wiring both machines share
+    patches/esp32s3/     esp32s3 machine wiring
+    patches/esp32c3/     esp32c3 machine wiring
     boards/              per-board run-time facts, consumed by the boot checks
     scripts/             bootstrap and build
 
@@ -51,6 +53,11 @@ Run it with the USB console on stdio (serial index 2; 0 and 1 are the UARTs):
 
 ## The models
 
+Board differences that are not run-time configuration -- the radio's chip-select GPIO,
+the SPI controller it hangs off -- are still compile-time constants in the models. A
+second board needs those promoted to qdev properties fed from `boards/*.json`; the
+directory layout does not help with that.
+
 `files/hw/xtensa/bramble/` comes from justinlindh/bramble (MIT) -- GPSPI2, an SX1262
 radio, a GPIO overlay, a SAR ADC and an SSD1680 display -- with our changes on top.
 
@@ -61,9 +68,14 @@ controller counts quad-I/O dummy cycles as one bit each instead of four, so ever
 `esp_partition_read` returns data shifted by two bytes and SPIFFS can never mount.
 It belongs upstream once it has a repro that does not depend on our images.
 
-`patches/machine/` is the wiring: building the models, attaching them to the esp32s3
-machine, driving the interrupt matrix combinationally, and a real USB-serial-JTAG
-console in place of the stub.
+`patches/common/` builds the models and replaces the USB-serial-JTAG stub with a real
+console. That model is shared: `hw/misc/esp32c3_jtag.c` backs the block on both
+machines, so the console work is not esp32s3-specific even though only the esp32s3
+machine wires it up today.
+
+`patches/esp32s3/` is that machine's own wiring -- attaching the models, connecting
+the console's chardev and interrupt, adding the two I2C controllers, and driving the
+interrupt matrix combinationally.
 
 Two things to know before touching the machine patches:
 

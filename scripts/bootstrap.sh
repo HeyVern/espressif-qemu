@@ -16,7 +16,11 @@ fi
 # upstream already owns.
 tar -C "$here/files" -cf - . | tar -C "$dest" -xf -
 
-for p in "$here"/patches/upstream/*.patch "$here"/patches/machine/*.patch; do
+# upstream fixes, then anything both machines share, then per-machine wiring.
+for p in "$here"/patches/upstream/*.patch \
+         "$here"/patches/common/*.patch \
+         "$here"/patches/esp32s3/*.patch \
+         "$here"/patches/esp32c3/*.patch; do
   [ -e "$p" ] || continue
   echo "applying $(basename "$p")"
   git -C "$dest" apply --whitespace=nowarn "$p"
