@@ -5,12 +5,8 @@ peripherals such a board needs -- there is no LoRa radio, the esp32s3 machine ha
 I2C controller, and the USB serial console is a stub -- so this repo carries the
 missing device models and the fixes, and publishes built binaries as releases.
 
-The emulator knows nothing about any particular firmware. It provides hardware;
-booting an image and driving its console is the caller's job.
-
-Nothing here is a fork. A pinned upstream clone is created at build time, the model
-sources are copied in, and the patches are applied on top -- a `files/` + `patches/`
-arrangement, so upstream stays upstream.
+A pinned upstream clone is created at build time, the model sources copied in and the
+patches applied on top, so upstream stays upstream and our changes stay reviewable.
 
 ## Layout
 
@@ -56,11 +52,10 @@ hardware CDC puts its console there.
 
 ## What this gets you
 
-A stock MeshCore `heltec_v4/repeater` image boots on this build, initialises its
-SX1262 through RadioLib, mounts SPIFFS, reaches `loop()` in about six seconds and
-answers its CLI over the emulated USB console. Nothing in this repo knows anything
-about MeshCore; that is a property of the emulated hardware being complete enough,
-and driving the firmware is the caller's job.
+Enough emulated hardware for a real firmware image to run: a stock heltec_v4 LoRa
+image boots on this build, brings up its SX1262 through RadioLib, mounts SPIFFS,
+reaches its main loop in about six seconds and answers commands over the emulated
+USB console.
 
 ## The models
 
