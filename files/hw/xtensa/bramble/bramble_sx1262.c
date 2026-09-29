@@ -26,6 +26,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "hw/qdev-core.h"
 #include "qom/object.h"
@@ -137,6 +138,7 @@ struct BrambleSx1262State {
     Sx1262RxFrame rx_cur;  /* the frame currently presented to the driver */
     bool rx_active;        /* rx_cur is latched, driver has not finished draining */
     bool dio1_level;       /* model's view of the DIO1/GPIO14 line it drives */
+    uint32_t dio1_gpio;    /* board pin wired to DIO1; -global driver=bramble.sx1262,property=dio1-gpio */
 
     /* Per-transaction cursor, reset on CS assert. */
     uint32_t byte_idx;     /* bytes seen since CS went low (opcode == 0) */
@@ -170,7 +172,7 @@ static int bramble_sx1262_set_cs(SSIPeripheral *dev, bool level)
 static void bramble_sx1262_set_dio1(BrambleSx1262State *s, bool level)
 {
     s->dio1_level = level;
-    bramble_gpio_set_input(SX1262_DIO1_GPIO, level);
+    bramble_gpio_set_input(s->dio1_gpio, level);
 }
 
 /* Broker `txdone`{toa_ms}: the airtime the broker priced has elapsed on the sim
@@ -542,9 +544,15 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
     emulink_on("rx", bramble_sx1262_on_rx, s);
 }
 
+static Property bramble_sx1262_properties[] = {
+    DEFINE_PROP_UINT32("dio1-gpio", BrambleSx1262State, dio1_gpio, SX1262_DIO1_GPIO),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void bramble_sx1262_class_init(ObjectClass *klass, void *data)
 {
     SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
+    device_class_set_props(DEVICE_CLASS(klass), bramble_sx1262_properties);
     k->realize = bramble_sx1262_realize;
     k->transfer = bramble_sx1262_transfer;
     k->set_cs = bramble_sx1262_set_cs;
