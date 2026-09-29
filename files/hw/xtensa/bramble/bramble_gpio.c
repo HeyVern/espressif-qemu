@@ -141,6 +141,7 @@ struct BrambleGpioState {
      * esp32s3, 0x8 on the esp32c3. A wrong value drops the ROM into download
      * mode and the image never runs. */
     uint32_t strap_mode;
+    uint64_t idle_high;   /* input pins that read high until injected; defaults to the pager buttons */
     uint32_t status[2];   /* latched interrupt status */
 
     /* Interrupt-matrix input for ETS_GPIO_INTR_SOURCE (a real edge would
@@ -407,12 +408,6 @@ static void bramble_gpio_instance_init(Object *obj)
     memory_region_init_io(&s->iomem, obj, &bramble_gpio_ops, s,
                           TYPE_BRAMBLE_GPIO, 0x1000);
 
-    /* Buttons idle released: active-low with pull-ups reads high. */
-    for (size_t i = 0; i < ARRAY_SIZE(bramble_buttons); i++) {
-        int pin = bramble_buttons[i].pin;
-        s->in[pin / 32] |= (1u << (pin % 32));
-    }
-
     object_property_add_bool(obj, "select", bramble_get_select, bramble_set_select);
     object_property_add_bool(obj, "up", bramble_get_up, bramble_set_up);
     object_property_add_bool(obj, "down", bramble_get_down, bramble_set_down);
@@ -421,11 +416,22 @@ static void bramble_gpio_instance_init(Object *obj)
 static Property bramble_gpio_properties[] = {
     DEFINE_PROP_UINT32("strap-mode", BrambleGpioState, strap_mode,
                        BRAMBLE_STRAP_MODE_FLASH_BOOT),
+    /* Pager buttons idle released (GPIO0, 21, 47); a board wiring a radio line there clears its bit. */
+    DEFINE_PROP_UINT64("idle-high", BrambleGpioState, idle_high,
+                       (1ull << 0) | (1ull << 21) | (1ull << 47)),
     DEFINE_PROP_END_OF_LIST(),
 };
 
+static void bramble_gpio_realize(DeviceState *dev, Error **errp)
+{
+    BrambleGpioState *s = BRAMBLE_GPIO(dev);
+    s->in[0] |= (uint32_t)s->idle_high;
+    s->in[1] |= (uint32_t)(s->idle_high >> 32);
+}
+
 static void bramble_gpio_class_init(ObjectClass *klass, void *data)
 {
+    DEVICE_CLASS(klass)->realize = bramble_gpio_realize;
     device_class_set_props(DEVICE_CLASS(klass), bramble_gpio_properties);
 }
 

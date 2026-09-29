@@ -25,6 +25,7 @@
 #include "hw/xtensa/bramble_gpspi2.h"
 #include "hw/xtensa/bramble_indicators.h"
 #include "hw/xtensa/bramble_emulink.h"
+#include "hw/xtensa/bramble_usbotg.h"
 
 void bramble_attach(MemoryRegion *sys_mem, DeviceState *gdma, DeviceState *intc)
 {
@@ -52,4 +53,7 @@ void bramble_attach(MemoryRegion *sys_mem, DeviceState *gdma, DeviceState *intc)
     /* Emu-link bridge to the gosim ether: connects the "emulink" chardev so the
      * SX1262 meshes with the linux pagers. A no-op on a standalone boot. */
     bramble_emulink_attach();
+
+    /* USB OTG device controller for TinyUSB builds; its CDC console is serial index 3. */
+    bramble_usbotg_attach(sys_mem, intc);
 }

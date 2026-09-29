@@ -15,6 +15,7 @@ xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
   'bramble_ssd1680.c',
   'bramble_indicators.c',
   'bramble_emulink.c',
+  'bramble_usbotg.c',
 ))
 
 # The radio path is SoC-independent: the GPIO overlay, the GPSPI2 controller and
