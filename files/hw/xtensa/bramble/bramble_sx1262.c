@@ -26,6 +26,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/timer.h"
 #include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "hw/qdev-core.h"
@@ -140,6 +141,11 @@ struct BrambleSx1262State {
      * GetRxBufferStatus (0x13) / GetPacketStatus (0x14). Held stable across the
      * whole drain sequence (the driver ReadBuffers AFTER it ClrIrqStatus-es). */
     uint8_t rx_len;
+    /* Presenting a queued frame from inside the SetRx SPI transaction raced the driver: RadioLib's
+     * ISR set MeshCore's STATE_INT_READY, then startRecv()'s `state = STATE_RX` assignment wiped it
+     * before any read, so every frame was lost. A real SX1262 cannot raise RX_DONE synchronously
+     * inside SetRx, so the re-arm presentation is deferred to just after the transaction instead. */
+    QEMUTimer *present_timer;
     uint8_t rx_offset;
     uint8_t rssi_raw;      /* GetPacketStatus byte 0: rssi = -raw/2 */
     int8_t snr_raw;        /* GetPacketStatus byte 1: snr = raw/4 */
@@ -287,6 +293,26 @@ static void bramble_sx1262_rx_rearm(BrambleSx1262State *s)
     }
 }
 
+/* Deferred arm of a queued frame: fires once the SetRx transaction has returned to the driver. */
+static void bramble_sx1262_present_deferred(void *opaque)
+{
+    bramble_sx1262_rx_rearm((BrambleSx1262State *)opaque);
+}
+
+/* 1 ms of virtual time: long enough that startRecv() has finished assigning its state, short enough
+ * that nothing waiting on a frame notices. */
+#define SX1262_PRESENT_DELAY_NS 1000000
+
+static void bramble_sx1262_rx_rearm_soon(BrambleSx1262State *s)
+{
+    if (s->present_timer) {
+        timer_mod(s->present_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SX1262_PRESENT_DELAY_NS);
+    } else {
+        bramble_sx1262_rx_rearm(s);
+    }
+}
+
 /* Broker `rx`{payload,rssi,snr,freq}: a frame survived the ether's
  * collision/capture model. Decode + queue it; if nothing is currently latched,
  * present it immediately (RX_DONE + DIO1 edge). The driver's ISR then reads
@@ -376,7 +402,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
             /* Re-arm RX: hand over a frame that arrived while the guest was not
              * yet listening, or re-raise a pending one the driver cleared
              * without draining (see bramble_sx1262_rx_rearm). */
-            bramble_sx1262_rx_rearm(s);
+            bramble_sx1262_rx_rearm_soon(s);
             break;
         case SX1262_CMD_SET_CAD: s->mode = SX1262_MODE_RX; break;
         case SX1262_CMD_SET_SLEEP:
@@ -546,6 +572,7 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
     BrambleSx1262State *s = BRAMBLE_SX1262(dev);
     (void)errp;
     s->mode = SX1262_MODE_STDBY_RC;
+    s->present_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, bramble_sx1262_present_deferred, s);
     s->irq_status = 0;
     s->byte_idx = 0;
     s->rx_fifo_head = 0;
