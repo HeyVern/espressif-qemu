@@ -44,12 +44,13 @@
 #include "hw/xtensa/bramble_gpio.h"
 #include "hw/xtensa/bramble_scaffold.h"
 #include "hw/misc/esp32s3_reg.h"
-/* Pulls in target/xtensa/cpu.h, which cannot be compiled into a riscv32
- * target. The esp32c3 machine attaches these models with intc == NULL, so
- * the interrupt path this supplies is unused there. */
-#ifdef CONFIG_XTENSA_ESP32S3
-#include "hw/xtensa/esp32s3_intc.h"
-#endif
+/* esp32s3_intc.h would give ETS_GPIO_INTR_SOURCE, but it pulls in target/xtensa/cpu.h, which cannot
+ * compile into the riscv32 (esp32c3) target. Guarding the include on CONFIG_XTENSA_ESP32S3 silently
+ * dropped the interrupt wiring instead: that macro lives in the per-target config-devices.h, which
+ * this file does not include, so it was never defined and s->intr stayed NULL. The number is all
+ * qdev_get_gpio_in needs, so take it locally and keep the wiring unconditional. The esp32c3 machine
+ * passes intc == NULL, so nothing is wired there either way. */
+#define BRAMBLE_ETS_GPIO_INTR_SOURCE 16   /* esp32s3_intc.h: interrupt of GPIO, level */
 
 /* GPIO peripheral register offsets (soc/gpio_reg.h, esp32s3). Banked: the
  * plain registers cover pins 0..31, the "1" variants cover pins 32..48. */
@@ -191,10 +192,27 @@ static const char *bramble_out_name(int pin)
  * matrix forwards levels, and a pulse raised and lowered inside one callback
  * is sampled by the CPU only after it has already dropped, so DIO1 edges get
  * lost. The SPI2 line has the same requirement. */
+/* BRAMBLE_RX_TRACE=1 also narrates the interrupt path: an input edge that latches status but never
+ * reaches the guest's ISR is otherwise indistinguishable from a firmware that ignores it. */
+static bool bramble_gpio_irq_trace(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("BRAMBLE_RX_TRACE");
+        enabled = (value && *value && *value != '0') ? 1 : 0;
+    }
+    return enabled;
+}
+
 static void bramble_gpio_update_intr(BrambleGpioState *s)
 {
+    int level = (s->status[0] | s->status[1]) ? 1 : 0;
+    if (bramble_gpio_irq_trace()) {
+        fprintf(stderr, "bramble-gpio: intr level=%d status=%08x/%08x intc=%s\n",
+                level, s->status[0], s->status[1], s->intr ? "wired" : "NULL");
+    }
     if (s->intr) {
-        qemu_set_irq(s->intr, (s->status[0] | s->status[1]) ? 1 : 0);
+        qemu_set_irq(s->intr, level);
     }
 }
 
@@ -252,7 +270,11 @@ static uint64_t bramble_gpio_read(void *opaque, hwaddr addr, unsigned int size)
     /* CPU-routed interrupt status the ISR polls: mirror the latched status so a
      * real edge is actually dispatched and cleared (otherwise the level line
      * driven off status stays asserted and the ISR livelocks re-reading 0). */
-    case R_GPIO_PCPU_INT:  return s->status[0];
+    case R_GPIO_PCPU_INT:
+        if (bramble_gpio_irq_trace()) {
+            fprintf(stderr, "bramble-gpio: guest read PCPU_INT=%08x\n", s->status[0]);
+        }
+        return s->status[0];
     case R_GPIO_PCPU_INT1: return s->status[1];
     default:              return 0;
     }
@@ -281,7 +303,11 @@ static void bramble_gpio_write(void *opaque, hwaddr addr, uint64_t value,
      * next edge re-asserts cleanly. */
     case R_GPIO_STATUS:       s->status[0] = v; bramble_gpio_update_intr(s); break;
     case R_GPIO_STATUS_W1TS:  s->status[0] |= v; bramble_gpio_update_intr(s); break;
-    case R_GPIO_STATUS_W1TC:  s->status[0] &= ~v; bramble_gpio_update_intr(s); break;
+    case R_GPIO_STATUS_W1TC:
+        if (bramble_gpio_irq_trace()) {
+            fprintf(stderr, "bramble-gpio: guest cleared STATUS bits %08x\n", v);
+        }
+        s->status[0] &= ~v; bramble_gpio_update_intr(s); break;
     case R_GPIO_STATUS1:      s->status[1] = v; bramble_gpio_update_intr(s); break;
     case R_GPIO_STATUS1_W1TS: s->status[1] |= v; bramble_gpio_update_intr(s); break;
     case R_GPIO_STATUS1_W1TC: s->status[1] &= ~v; bramble_gpio_update_intr(s); break;
@@ -465,8 +491,6 @@ void bramble_gpio_attach(MemoryRegion *sys_mem, DeviceState *intc)
 
     s_bramble_gpio = s;
     if (intc) {
-#ifdef CONFIG_XTENSA_ESP32S3
-        s->intr = qdev_get_gpio_in(intc, ETS_GPIO_INTR_SOURCE);
-#endif
+        s->intr = qdev_get_gpio_in(intc, BRAMBLE_ETS_GPIO_INTR_SOURCE);
     }
 }

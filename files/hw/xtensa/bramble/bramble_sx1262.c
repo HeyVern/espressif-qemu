@@ -51,6 +51,24 @@
 #define SX1262_CMD_READ_BUFFER      0x1E
 #define SX1262_CMD_GET_IRQ_STATUS   0x12
 #define SX1262_CMD_GET_RX_BUFF_STATUS 0x13
+
+/* BRAMBLE_RX_TRACE=1 narrates the RX drain. The path is only reachable with a broker attached, and
+ * nothing exercised it until the emu-link mesh tests, so it needs to be observable from outside. */
+#define RX_TRACE(fmt, ...) do { \
+    if (rx_trace_enabled()) { \
+        fprintf(stderr, "bramble-sx1262: " fmt "\n", ##__VA_ARGS__); \
+    } \
+} while (0)
+
+static bool rx_trace_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("BRAMBLE_RX_TRACE");
+        enabled = (value && *value && *value != '0') ? 1 : 0;
+    }
+    return enabled;
+}
 #define SX1262_CMD_GET_PKT_STATUS   0x14
 #define SX1262_CMD_CLR_IRQ_STATUS   0x02
 #define SX1262_CMD_SET_RF_FREQ      0x86
@@ -194,6 +212,7 @@ static void bramble_sx1262_rx_load_cur(BrambleSx1262State *s)
 {
     memcpy(s->buffer, s->rx_cur.data, s->rx_cur.len);
     s->rx_len = s->rx_cur.len;
+    RX_TRACE("load_cur: rx_len=%u offset=%u", s->rx_len, s->rx_offset);
     s->rx_offset = 0;
     s->rssi_raw = s->rx_cur.rssi_raw;
     s->snr_raw = s->rx_cur.snr_raw;
@@ -223,6 +242,7 @@ static void bramble_sx1262_rx_present(BrambleSx1262State *s)
 
     bramble_sx1262_rx_load_cur(s);
     s->irq_status |= SX1262_IRQ_RX_DONE;
+    RX_TRACE("present: DIO1 up, len=%u", s->rx_cur.len);
     s->rx_active = true;
     /* DIO1 was driven low by the previous frame's ClrIrqStatus (or was never
      * raised), so this is a real 0->1 edge that fires the driver's ISR. */
@@ -287,6 +307,7 @@ static void bramble_sx1262_on_rx(QDict *msg, void *ctx)
         return; /* radio frames are never empty and cap at 255 bytes */
     }
 
+    RX_TRACE("on_rx: %zu B queued, mode=%d fifo=%d", n, s->mode, s->rx_fifo_count);
     int rssi = (int)qdict_get_try_int(msg, "rssi", -100);
     int snr = (int)qdict_get_try_int(msg, "snr", 0);
     /* GetPacketStatus readback encoding (sx1262.c): rssi = -raw/2, snr = raw/4. */
@@ -351,6 +372,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
             break;
         case SX1262_CMD_SET_RX:
             s->mode = SX1262_MODE_RX;
+            RX_TRACE("SetRx: listening, fifo=%d", s->rx_fifo_count);
             /* Re-arm RX: hand over a frame that arrived while the guest was not
              * yet listening, or re-raise a pending one the driver cleared
              * without draining (see bramble_sx1262_rx_rearm). */
@@ -359,6 +381,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
         case SX1262_CMD_SET_CAD: s->mode = SX1262_MODE_RX; break;
         case SX1262_CMD_SET_SLEEP:
         case SX1262_CMD_SET_STANDBY:
+            RX_TRACE("SetStandby/Sleep: leaving RX, fifo=%d", s->rx_fifo_count);
         default: s->mode = SX1262_MODE_STDBY_RC; break;
         }
         return bramble_sx1262_status(s);
@@ -410,6 +433,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
     case SX1262_CMD_READ_BUFFER:
         if (idx == 1) {
             s->buf_offset = in;
+            RX_TRACE("ReadBuffer: from offset=%u (rx_len=%u)", s->buf_offset, s->rx_len);
         } else if (idx == 2) {
             /* NOP byte: chip returns status. */
         } else {
@@ -441,6 +465,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
         /* status, then payload length, then rx start offset. */
         if (idx == 2) {
             out = s->rx_len;
+            RX_TRACE("GetRxBufferStatus: reporting len=%u", s->rx_len);
         } else if (idx == 3) {
             out = s->rx_offset;
         }
