@@ -408,7 +408,10 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
         case SX1262_CMD_SET_SLEEP:
         case SX1262_CMD_SET_STANDBY:
             RX_TRACE("SetStandby/Sleep: leaving RX, fifo=%d", s->rx_fifo_count);
-        default: s->mode = SX1262_MODE_STDBY_RC; break;
+            s->mode = SX1262_MODE_STDBY_RC;
+            break;
+        default:
+            break;
         }
         return bramble_sx1262_status(s);
     }
