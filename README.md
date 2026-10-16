@@ -64,7 +64,8 @@ hardware CDC puts its console there.
 Enough emulated hardware for a real firmware image to run. On esp32s3, a stock
 heltec_v4 LoRa image boots, brings up its SX1262 through RadioLib, mounts SPIFFS,
 reaches its main loop in about six seconds and answers commands over the emulated
-USB console. On esp32c3, a stock XIAO image does the same.
+USB console. On esp32c3, a stock XIAO image does the same. A stock Waveshare ESP32-S3-LR1121 image
+(upstream v1.18.0) brings up its LR1121 the same way.
 
 A release build sends its console to USB, so UART0 is silent and a log can look like
 a hang when the firmware is running fine. Building the image with the console on
@@ -84,6 +85,15 @@ every board:
 
 Both are load-bearing: a wrong `cs-gpio` gives `radio init failed: -2`, and a wrong
 `spi-base` puts the radio on a bus the firmware never talks to.
+
+A third property picks the radio model on the bus:
+
+    radio      sx1262 (default) or lr1121
+
+The LR1121 model (`bramble_lr1121.c`) answers RadioLib's LR11x0 driver: 16-bit opcodes, answers
+read back in a second all-NOP transaction, GetStatus by NOPs, and its interrupt on DIO9, set with
+`-global driver=bramble.lr1121,property=dio9-gpio,value=<pin>`. TX and RX ride the same emu-link
+events as the SX1262. `BRAMBLE_LR_TRACE=1` logs each command it executes.
 
 ## The patches
 

@@ -1,0 +1,27 @@
+{
+  "board": "waveshare_esp32s3_lr1121",
+  "mcu": "esp32s3",
+  "machine": "esp32s3",
+  "arch": "xtensa",
+  "binary": "qemu-system-xtensa",
+  "mem": "8M",
+  "flash_size": "16MB",
+  "flash_note": "QEMU picks the emulated flash chip from the drive size and only the 16MB ISSI part passes esp_flash_init_default_chip(), so pad the image to 16 MB as firmware's qemu_boot_check.py does for every board.",
+  "serial": [
+    "uart0",
+    "uart1",
+    "usb-serial-jtag"
+  ],
+  "serial_note": "Index 2 is the SoC's USB console, which is where a hardware-CDC build puts stdio.",
+  "qemu_args": [
+    "-global",
+    "driver=bramble.gpspi2,property=cs-gpio,value=42",
+    "-global",
+    "driver=bramble.gpspi2,property=spi-base,value=0x60025000",
+    "-global",
+    "driver=bramble.gpspi2,property=radio,value=lr1121",
+    "-global",
+    "driver=bramble.lr1121,property=dio9-gpio,value=38"
+  ],
+  "qemu_args_note": "Long form is required: the driver name contains a dot, and -global a.b=c splits at the first one."
+}

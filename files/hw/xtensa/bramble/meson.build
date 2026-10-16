@@ -12,6 +12,7 @@ xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
   'bramble_adc.c',
   'bramble_gpspi2.c',
   'bramble_sx1262.c',
+  'bramble_lr1121.c',
   'bramble_ssd1680.c',
   'bramble_indicators.c',
   'bramble_emulink.c',
@@ -26,6 +27,7 @@ riscv_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
   'bramble_gpio.c',
   'bramble_gpspi2.c',
   'bramble_sx1262.c',
+  'bramble_lr1121.c',
   'bramble_ssd1680.c',
   'bramble_emulink.c',
 ))

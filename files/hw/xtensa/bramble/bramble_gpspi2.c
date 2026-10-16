@@ -75,6 +75,8 @@
 #include "hw/xtensa/bramble_gpio.h"
 #include "hw/xtensa/bramble_scaffold.h"
 #include "hw/xtensa/bramble_sx1262.h"
+#include "hw/xtensa/bramble_lr1121.h"
+#include "qemu/error-report.h"
 #include "hw/xtensa/bramble_ssd1680.h"
 #include "hw/misc/esp32s3_reg.h"
 /* Pulls in target/xtensa/cpu.h, which cannot be compiled into a riscv32
@@ -162,6 +164,8 @@ struct BrambleGpspi2State {
      *          SPIClass defaults to HSPI, which is SPI3 on the S3). */
     uint32_t cs_gpio;
     uint64_t spi_base;
+    /* radio    which radio model answers on the bus: "sx1262" (default) or "lr1121" */
+    char *radio;
 
     /* SSI_GPIO_CS inputs of the two bus slaves, driven per-transfer from the
      * CS-routing decision (bramble_gpspi2_route). radio_cs -> SX1262 slave,
@@ -455,6 +459,7 @@ static void bramble_gpspi2_instance_init(Object *obj)
 static Property bramble_gpspi2_properties[] = {
     DEFINE_PROP_UINT32("cs-gpio", BrambleGpspi2State, cs_gpio, SX1262_CS_GPIO),
     DEFINE_PROP_UINT64("spi-base", BrambleGpspi2State, spi_base, DR_REG_SPI3_BASE),
+    DEFINE_PROP_STRING("radio", BrambleGpspi2State, radio),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -518,7 +523,13 @@ void bramble_gpspi2_attach(MemoryRegion *sys_mem, DeviceState *gdma,
     /* Distinct SSI cs_index values so ssi_peripheral_realize's uniqueness check
      * passes; actual selection is driven through each slave's SSI_GPIO_CS input
      * by bramble_gpspi2_route, not this index. */
-    DeviceState *radio = qdev_new(TYPE_BRAMBLE_SX1262);
+    const char *radio_type = TYPE_BRAMBLE_SX1262;
+    if (s->radio && strcmp(s->radio, "lr1121") == 0) {
+        radio_type = TYPE_BRAMBLE_LR1121;
+    } else if (s->radio && strcmp(s->radio, "sx1262") != 0) {
+        error_report("bramble-gpspi2: unknown radio '%s', using sx1262", s->radio);
+    }
+    DeviceState *radio = qdev_new(radio_type);
     qdev_prop_set_uint8(radio, "cs", 0);
     ssi_realize_and_unref(radio, s->spi, &error_fatal);
     s->radio_cs = qdev_get_gpio_in_named(radio, SSI_GPIO_CS, 0);
