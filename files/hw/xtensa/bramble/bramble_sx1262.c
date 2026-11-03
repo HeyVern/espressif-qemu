@@ -82,6 +82,10 @@ static bool rx_trace_enabled(void)
 /* IRQ-status bits the radio driver reads via GetIrqStatus (mirror sx1262.h). */
 #define SX1262_IRQ_TX_DONE          (1u << 0)
 #define SX1262_IRQ_RX_DONE          (1u << 1)
+#define SX1262_IRQ_PREAMBLE         (1u << 2)
+#define SX1262_IRQ_HEADER_VALID     (1u << 4)
+#define SX1262_IRQ_CAD_DONE         (1u << 7)
+#define SX1262_IRQ_CAD_DETECTED     (1u << 8)
 
 /* DIO1 = GPIO14 (main/boards/bramble_pager.h): the radio driver installs a
  * posedge ISR here; the SX1262 model raises it on TxDone/RxDone via the GPIO
@@ -146,6 +150,9 @@ struct BrambleSx1262State {
      * before any read, so every frame was lost. A real SX1262 cannot raise RX_DONE synchronously
      * inside SetRx, so the re-arm presentation is deferred to just after the transaction instead. */
     QEMUTimer *present_timer;
+    QEMUTimer *cad_timer;
+    int64_t sense_until_ns;  /* a frame that began while listening: preamble and header IRQs read set */
+    int64_t cad_until_ns;    /* anything on the air, or a spurious detection: CAD reports activity */
     uint8_t rx_offset;
     uint8_t rssi_raw;      /* GetPacketStatus byte 0: rssi = -raw/2 */
     int8_t snr_raw;        /* GetPacketStatus byte 1: snr = raw/4 */
@@ -365,6 +372,38 @@ static void bramble_sx1262_on_rx(QDict *msg, void *ctx)
     bramble_sx1262_rx_present(s);
 }
 
+/* Broker `carrier`{ms,spur}: something reachable just started. Only a listening radio catches the
+ * preamble; CAD finds a frame at any point. A spurious event is a false CAD detection only. */
+static void bramble_sx1262_on_carrier(QDict *msg, void *ctx)
+{
+    BrambleSx1262State *s = ctx;
+    int64_t until = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + qdict_get_try_int(msg, "ms", 0) * 1000000LL;
+    s->cad_until_ns = MAX(s->cad_until_ns, until);
+    if (!qdict_get_try_int(msg, "spur", 0) && s->mode == SX1262_MODE_RX) {
+        s->sense_until_ns = MAX(s->sense_until_ns, until);
+    }
+}
+
+static void bramble_sx1262_cad_done(void *opaque)
+{
+    BrambleSx1262State *s = opaque;
+    s->irq_status |= SX1262_IRQ_CAD_DONE;
+    if (s->cad_until_ns > qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)) {
+        s->irq_status |= SX1262_IRQ_CAD_DETECTED;
+    }
+    s->mode = SX1262_MODE_STDBY_RC;
+    bramble_sx1262_set_dio1(s, true);
+}
+
+static uint16_t bramble_sx1262_irq_read(BrambleSx1262State *s)
+{
+    uint16_t irq = s->irq_status;
+    if (s->mode == SX1262_MODE_RX && s->sense_until_ns > qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)) {
+        irq |= SX1262_IRQ_PREAMBLE | SX1262_IRQ_HEADER_VALID;
+    }
+    return irq;
+}
+
 static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
 {
     BrambleSx1262State *s = BRAMBLE_SX1262(dev);
@@ -404,7 +443,12 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
              * without draining (see bramble_sx1262_rx_rearm). */
             bramble_sx1262_rx_rearm_soon(s);
             break;
-        case SX1262_CMD_SET_CAD: s->mode = SX1262_MODE_RX; break;
+        case SX1262_CMD_SET_CAD:
+            /* Not RX: a frame arriving now waits for the driver's next SetRx. Four symbols. */
+            s->mode = SX1262_MODE_FS;
+            timer_mod(s->cad_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
+                      + 4000000000LL * (1LL << s->tx_sf) / s->tx_bw_hz);
+            break;
         case SX1262_CMD_SET_SLEEP:
         case SX1262_CMD_SET_STANDBY:
             RX_TRACE("SetStandby/Sleep: leaving RX, fifo=%d", s->rx_fifo_count);
@@ -471,9 +515,9 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
         break;
     case SX1262_CMD_GET_IRQ_STATUS:
         if (idx == 2) {
-            out = (s->irq_status >> 8) & 0xff;
+            out = (bramble_sx1262_irq_read(s) >> 8) & 0xff;
         } else if (idx == 3) {
-            out = s->irq_status & 0xff;
+            out = bramble_sx1262_irq_read(s) & 0xff;
         }
         break;
     case SX1262_CMD_CLR_IRQ_STATUS:
@@ -537,7 +581,10 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
         if (idx == 1) {
             s->tx_sf = in;
         } else if (idx == 2) {
-            s->tx_bw_hz = (in == 0x05) ? 250000 : (in == 0x06) ? 500000 : 125000;
+            /* SetModulationParams bandwidth codes; 7.8 kHz is code 0. */
+            static const int bw[16] = { 7812, 15625, 31250, 62500, 125000, 250000, 500000, 0,
+                                        10417, 20833, 41667, 0, 0, 0, 0, 0 };
+            s->tx_bw_hz = bw[in & 0x0f] ? bw[in & 0x0f] : 125000;
         } else if (idx == 3) {
             s->tx_cr = in;
         }
@@ -576,6 +623,7 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
     (void)errp;
     s->mode = SX1262_MODE_STDBY_RC;
     s->present_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, bramble_sx1262_present_deferred, s);
+    s->cad_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, bramble_sx1262_cad_done, s);
     s->irq_status = 0;
     s->byte_idx = 0;
     s->rx_fifo_head = 0;
@@ -597,6 +645,7 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
      * later at machine init. */
     emulink_on("txdone", bramble_sx1262_on_txdone, s);
     emulink_on("rx", bramble_sx1262_on_rx, s);
+    emulink_on("carrier", bramble_sx1262_on_carrier, s);
 }
 
 static Property bramble_sx1262_properties[] = {

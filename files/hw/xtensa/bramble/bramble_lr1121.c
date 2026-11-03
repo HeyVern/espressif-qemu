@@ -48,6 +48,10 @@
 
 #define LR_IRQ_TX_DONE         (1u << 2)
 #define LR_IRQ_RX_DONE         (1u << 3)
+#define LR_IRQ_PREAMBLE        (1u << 4)
+#define LR_IRQ_HEADER_VALID    (1u << 5)
+#define LR_IRQ_CAD_DONE        (1u << 8)
+#define LR_IRQ_CAD_DETECTED    (1u << 9)
 
 /* Stat2 chip modes (manual table 3-2). */
 #define LR_MODE_SLEEP          0
@@ -129,6 +133,9 @@ struct BrambleLr1121State {
     bool dio9_level;
     uint32_t dio9_gpio;
     QEMUTimer *present_timer;
+    QEMUTimer *cad_timer;
+    int64_t sense_until_ns;  /* a frame that began while listening: preamble and header IRQs read set */
+    int64_t cad_until_ns;    /* anything on the air, or a spurious detection: CAD reports activity */
     uint32_t random_state;
 };
 
@@ -236,6 +243,37 @@ static void lr_on_rx(QDict *msg, void *ctx)
     lr_rx_present(s);
 }
 
+/* Broker `carrier`{ms,spur}: only a listening radio catches the preamble; CAD finds a frame at any point. */
+static void lr_on_carrier(QDict *msg, void *ctx)
+{
+    BrambleLr1121State *s = ctx;
+    int64_t until = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + qdict_get_try_int(msg, "ms", 0) * 1000000LL;
+    s->cad_until_ns = MAX(s->cad_until_ns, until);
+    if (!qdict_get_try_int(msg, "spur", 0) && s->mode == LR_MODE_RX) {
+        s->sense_until_ns = MAX(s->sense_until_ns, until);
+    }
+}
+
+static void lr_cad_done(void *opaque)
+{
+    BrambleLr1121State *s = opaque;
+    uint32_t flags = LR_IRQ_CAD_DONE;
+    if (s->cad_until_ns > qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)) {
+        flags |= LR_IRQ_CAD_DETECTED;
+    }
+    s->mode = LR_MODE_STBY_RC;
+    lr_raise(s, flags);
+}
+
+static uint32_t lr_irq_read(BrambleLr1121State *s)
+{
+    uint32_t irq = s->irq_status;
+    if (s->mode == LR_MODE_RX && s->sense_until_ns > qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)) {
+        irq |= LR_IRQ_PREAMBLE | LR_IRQ_HEADER_VALID;
+    }
+    return irq;
+}
+
 static void lr_on_txdone(QDict *msg, void *ctx)
 {
     (void)msg;
@@ -262,10 +300,10 @@ static void lr_execute(BrambleLr1121State *s)
     switch (s->opcode) {
     case LR_GET_STATUS:
         out[0] = lr_stat2(s);
-        out[1] = s->irq_status >> 24;
-        out[2] = s->irq_status >> 16;
-        out[3] = s->irq_status >> 8;
-        out[4] = s->irq_status;
+        out[1] = lr_irq_read(s) >> 24;
+        out[2] = lr_irq_read(s) >> 16;
+        out[3] = lr_irq_read(s) >> 8;
+        out[4] = lr_irq_read(s);
         lr_answer(s, out, 5);
         break;
     case LR_GET_VERSION:
@@ -404,8 +442,12 @@ static void lr_execute(BrambleLr1121State *s)
             emulink_send_tx(s->buffer, s->tx_len, s->freq_mhz, s->sf, s->bw_hz, s->cr, s->power);
         }
         break;
-    case LR_SET_RX:
     case LR_SET_CAD:
+        /* Not RX: a frame arriving now waits for the driver's next SetRx. Four symbols. */
+        s->mode = LR_MODE_FS;
+        timer_mod(s->cad_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 4000000000LL * (1LL << s->sf) / s->bw_hz);
+        break;
+    case LR_SET_RX:
         s->mode = LR_MODE_RX;
         timer_mod(s->present_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + LR_PRESENT_DELAY_NS);
         break;
@@ -463,10 +505,10 @@ static uint32_t bramble_lr1121_transfer(SSIPeripheral *dev, uint32_t val)
     /* GetStatus by NOPs: Stat2, then the IRQ flags most significant first. */
     switch (idx) {
     case 1: return lr_stat2(s);
-    case 2: return (s->irq_status >> 24) & 0xff;
-    case 3: return (s->irq_status >> 16) & 0xff;
-    case 4: return (s->irq_status >> 8) & 0xff;
-    case 5: return s->irq_status & 0xff;
+    case 2: return (lr_irq_read(s) >> 24) & 0xff;
+    case 3: return (lr_irq_read(s) >> 16) & 0xff;
+    case 4: return (lr_irq_read(s) >> 8) & 0xff;
+    case 5: return lr_irq_read(s) & 0xff;
     default: return 0;
     }
 }
@@ -484,8 +526,10 @@ static void bramble_lr1121_realize(SSIPeripheral *dev, Error **errp)
     s->power = 22;
     s->random_state = 0x1121u;
     s->present_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, lr_present_deferred, s);
+    s->cad_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, lr_cad_done, s);
     emulink_on("txdone", lr_on_txdone, s);
     emulink_on("rx", lr_on_rx, s);
+    emulink_on("carrier", lr_on_carrier, s);
 }
 
 static Property bramble_lr1121_properties[] = {
