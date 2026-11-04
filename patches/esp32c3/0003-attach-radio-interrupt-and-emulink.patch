@@ -1,0 +1,21 @@
+diff --git a/hw/riscv/esp32c3.c b/hw/riscv/esp32c3.c
+--- a/hw/riscv/esp32c3.c
++++ b/hw/riscv/esp32c3.c
+@@ -50,6 +50,7 @@
+ #include "hw/i2c/esp32_i2c.h"
+ #include "hw/xtensa/bramble_gpio.h"
+ #include "hw/xtensa/bramble_gpspi2.h"
++#include "hw/xtensa/bramble_emulink.h"
+ #include "hw/dma/esp32c3_gdma.h"
+ #include "hw/display/esp_rgb.h"
+ #include "hw/net/can/esp32c3_twai.h"
+@@ -469,7 +470,9 @@ static void esp32c3_machine_init(MachineState *machine)
+     /* Radio path: the GPIO out-observer the CS framing needs, then the GPSPI2
+      * controller with its SX1262 slave. Board wiring comes from -global. */
+     bramble_gpio_attach(sys_mem, NULL);
++    bramble_gpio_set_intr(qdev_get_gpio_in(intmatrix_dev, ETS_GPIO_INTR_SOURCE));
+     bramble_gpspi2_attach(sys_mem, NULL, NULL);
++    bramble_emulink_attach();
+ 
+     /* USB Serial JTAG realization. The two UARTs take serial 0 and 1, so the SoC's
+      * own USB console lands on serial 2 -- which is where a hardware-CDC build puts

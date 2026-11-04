@@ -476,6 +476,12 @@ static void bramble_gpio_register_types(void)
 
 type_init(bramble_gpio_register_types)
 
+/* For a machine whose interrupt numbering differs from the esp32s3's. */
+void bramble_gpio_set_intr(qemu_irq intr)
+{
+    s_bramble_gpio->intr = intr;
+}
+
 void bramble_gpio_attach(MemoryRegion *sys_mem, DeviceState *intc)
 {
     Object *obj = object_new(TYPE_BRAMBLE_GPIO);

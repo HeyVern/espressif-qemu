@@ -20,6 +20,7 @@
  *            raise ETS_GPIO_INTR_SOURCE like a real edge would.
  */
 void bramble_gpio_attach(MemoryRegion *sys_mem, DeviceState *intc);
+void bramble_gpio_set_intr(qemu_irq intr);
 
 /*
  * Current driven level (0/1) of GPIO output pin `pin` (0..48), read from the
