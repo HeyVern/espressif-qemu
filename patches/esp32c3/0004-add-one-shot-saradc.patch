@@ -1,0 +1,62 @@
+--- a/hw/riscv/esp32c3.c
++++ b/hw/riscv/esp32c3.c
+@@ -148,6 +148,47 @@
+     return addr >= start && addr < end;
+ }
+ 
++/* Just enough of APB_SARADC for one-shot reads: a conversion finishes at once, with a fixed result. */
++#define ESP32C3_SARADC_BASE         0x60040000
++#define ESP32C3_SARADC_ONETIME      0x20
++#define ESP32C3_SARADC_ONETIME_START (1u << 29)
++#define ESP32C3_SARADC_ADC1_DATA    0x2c
++#define ESP32C3_SARADC_ADC2_DATA    0x30
++#define ESP32C3_SARADC_INT_RAW      0x44
++#define ESP32C3_SARADC_INT_CLR      0x4c
++#define ESP32C3_SARADC_DONE         (3u << 30)
++#define ESP32C3_SARADC_RESULT       2764
++
++static uint32_t esp32c3_saradc_regs[0x100 / 4];
++
++static uint64_t esp32c3_saradc_read(void *opaque, hwaddr addr, unsigned int size)
++{
++    if (addr == ESP32C3_SARADC_ADC1_DATA || addr == ESP32C3_SARADC_ADC2_DATA) {
++        return ESP32C3_SARADC_RESULT;
++    }
++    return esp32c3_saradc_regs[addr / 4];
++}
++
++static void esp32c3_saradc_write(void *opaque, hwaddr addr, uint64_t value, unsigned int size)
++{
++    if (addr == ESP32C3_SARADC_INT_CLR) {
++        esp32c3_saradc_regs[ESP32C3_SARADC_INT_RAW / 4] &= ~(uint32_t)value;
++        return;
++    }
++    esp32c3_saradc_regs[addr / 4] = value;
++    if (addr == ESP32C3_SARADC_ONETIME && (value & ESP32C3_SARADC_ONETIME_START)) {
++        esp32c3_saradc_regs[ESP32C3_SARADC_INT_RAW / 4] |= ESP32C3_SARADC_DONE;
++    }
++}
++
++static const MemoryRegionOps esp32c3_saradc_ops = {
++    .read = esp32c3_saradc_read,
++    .write = esp32c3_saradc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
+ static uint64_t esp32c3_io_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     if (addr_in_range(addr + ESP32C3_IO_START_ADDR, DR_REG_RTC_I2C_BASE, DR_REG_RTC_I2C_BASE + 0x100)) {
+@@ -682,6 +723,11 @@
+         memory_region_add_subregion_overlap(sys_mem, esp32c3_memmap[ESP32C3_MEMREGION_FRAMEBUF].base, &ms->rgb.vram, 0);
+     }
+ 
++    /* One-shot ADC, so firmware reading its battery does not spin on the done flag */
++    MemoryRegion *saradc_mr = g_new(MemoryRegion, 1);
++    memory_region_init_io(saradc_mr, OBJECT(machine), &esp32c3_saradc_ops, NULL, "esp32c3.saradc", 0x100);
++    memory_region_add_subregion_overlap(sys_mem, ESP32C3_SARADC_BASE, saradc_mr, 0);
++
+     /* TWAI peripheral realization */
+     sysbus_realize(SYS_BUS_DEVICE(&ms->twai), &error_fatal);
+     MemoryRegion *twai_mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&ms->twai), 0);
