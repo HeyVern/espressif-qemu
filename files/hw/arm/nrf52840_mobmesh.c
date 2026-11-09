@@ -33,7 +33,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Nrf52840MachineState, NRF52840_MACHINE)
 #define FLASH_SIZE (1024 * 1024)
 #define SRAM_SIZE (256 * 1024)
 #define PAGE_SIZE_NRF 4096
-#define APP_BASE 0x26000
+#define APP_BASE_S140_V6 0x26000
 #define STUB_BASE 0x1000
 #define SVC_VECTOR_OFFSET 0x2c
 #define STUB_APP_SLOT 0x28
@@ -171,6 +171,7 @@ struct Nrf52840MachineState {
     CharBackend uart0;
     SSIBus *spi;
     qemu_irq radio_cs_line;
+    uint32_t app_base;
     uint32_t radio_cs;
     uint32_t radio_dio1;
     uint32_t radio_busy;
@@ -1160,21 +1161,21 @@ static void load_app(Nrf52840MachineState *s, const char *path)
         error_report("nrf52840-mobmesh: %s", err->message);
         exit(1);
     }
-    if (length > FLASH_SIZE - APP_BASE) {
+    if (s->app_base >= FLASH_SIZE || length > FLASH_SIZE - s->app_base) {
         error_report("nrf52840-mobmesh: image does not fit in flash");
         exit(1);
     }
     memset(s->flash_ptr, 0xff, FLASH_SIZE);
     open_flash_file(s);
-    memcpy(s->flash_ptr + APP_BASE, data, length);
-    nrf52840_cc310_patch(s->flash_ptr + APP_BASE, length);
+    memcpy(s->flash_ptr + s->app_base, data, length);
+    nrf52840_cc310_patch(s->flash_ptr + s->app_base, length);
 
     // The vector table stays at the app; only its SVC entry is redirected through the stub.
-    uint32_t app_svc = ldl_le_p(s->flash_ptr + APP_BASE + SVC_VECTOR_OFFSET);
+    uint32_t app_svc = ldl_le_p(s->flash_ptr + s->app_base + SVC_VECTOR_OFFSET);
 
     memcpy(s->flash_ptr + STUB_BASE, svc_stub, sizeof(svc_stub));
     stl_le_p(s->flash_ptr + STUB_BASE + STUB_APP_SLOT, app_svc);
-    stl_le_p(s->flash_ptr + APP_BASE + SVC_VECTOR_OFFSET, STUB_BASE | 1);
+    stl_le_p(s->flash_ptr + s->app_base + SVC_VECTOR_OFFSET, STUB_BASE | 1);
 }
 
 static void init_ficr_uicr(Nrf52840MachineState *s)
@@ -1249,7 +1250,7 @@ static void nrf52840_init(MachineState *machine)
     qdev_prop_set_uint32(armv7m, "num-irq", NUM_PERIPH);
     qdev_prop_set_uint8(armv7m, "num-prio-bits", 3);
     qdev_prop_set_string(armv7m, "cpu-type", ARM_CPU_TYPE_NAME("cortex-m4"));
-    qdev_prop_set_uint32(armv7m, "init-nsvtor", APP_BASE);
+    qdev_prop_set_uint32(armv7m, "init-nsvtor", s->app_base);
     qdev_prop_set_bit(armv7m, "enable-bitband", false);
     qdev_connect_clock_in(armv7m, "cpuclk", s->sysclk);
     qdev_connect_clock_in(armv7m, "refclk", s->refclk);
@@ -1315,6 +1316,10 @@ static void nrf52840_instance_init(Object *obj)
 {
     Nrf52840MachineState *s = NRF52840_MACHINE(obj);
 
+    // Where the app is linked: 0x26000 after S140 6.x, 0x27000 after S140 7.x.
+    s->app_base = APP_BASE_S140_V6;
+    object_property_add_uint32_ptr(obj, "app-base", &s->app_base,
+                                   OBJ_PROP_FLAG_READWRITE);
     s->radio_cs = 43;
     s->radio_dio1 = 31;
     s->radio_busy = 29;
