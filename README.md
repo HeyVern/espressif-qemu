@@ -16,6 +16,7 @@ patches applied on top, so upstream stays upstream and our changes stay reviewab
     patches/common/      device models and build wiring both machines share
     patches/esp32s3/     esp32s3 machine wiring
     patches/esp32c3/     esp32c3 machine wiring
+    patches/nrf52840/    nrf52840 machine build wiring
     boards/              per-board run-time facts, consumed by the boot checks
     scripts/             bootstrap and build
 

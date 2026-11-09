@@ -27,6 +27,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/timer.h"
+#include "qemu/guest-random.h"
 #include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "hw/qdev-core.h"
@@ -169,6 +170,7 @@ struct BrambleSx1262State {
     Sx1262RxFrame rx_cur;  /* the frame currently presented to the driver */
     bool rx_active;        /* rx_cur is latched, driver has not finished draining */
     bool dio1_level;       /* model's view of the DIO1/GPIO14 line it drives */
+    bool noise_reg;        /* RegRandomNumber returns noise, for firmware that seeds identity from it */
     uint32_t dio1_gpio;    /* board pin wired to DIO1; -global driver=bramble.sx1262,property=dio1-gpio */
 
     /* Per-transaction cursor, reset on CS assert. */
@@ -480,6 +482,9 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
             /* NOP byte: chip returns status. */
         } else {
             out = s->regs[s->reg_addr % SX1262_REGFILE_SIZE];
+            if (s->noise_reg && s->reg_addr >= 0x0819 && s->reg_addr <= 0x081c) {
+                qemu_guest_getrandom_nofail(&out, 1);
+            }
             { static unsigned rn; if (rn++ < 24)
                 qemu_log("RDREG addr=0x%04x idx=%u -> 0x%02x\n",
                          (unsigned)s->reg_addr, (unsigned)idx, (unsigned)out); }
@@ -650,6 +655,7 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
 
 static Property bramble_sx1262_properties[] = {
     DEFINE_PROP_UINT32("dio1-gpio", BrambleSx1262State, dio1_gpio, SX1262_DIO1_GPIO),
+    DEFINE_PROP_BOOL("noise-reg", BrambleSx1262State, noise_reg, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 

@@ -20,7 +20,8 @@ tar -C "$here/files" -cf - . | tar -C "$dest" -xf -
 for p in "$here"/patches/upstream/*.patch \
          "$here"/patches/common/*.patch \
          "$here"/patches/esp32s3/*.patch \
-         "$here"/patches/esp32c3/*.patch; do
+         "$here"/patches/esp32c3/*.patch \
+         "$here"/patches/nrf52840/*.patch; do
   [ -e "$p" ] || continue
   echo "applying $(basename "$p")"
   git -C "$dest" apply --whitespace=nowarn "$p"

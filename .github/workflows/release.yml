@@ -24,6 +24,9 @@ jobs:
           - mcu: esp32c3
             target: riscv32-softmmu
             binary: qemu-system-riscv32
+          - mcu: nrf52840
+            target: arm-softmmu
+            binary: qemu-system-arm
     steps:
       - uses: actions/checkout@v4
 
