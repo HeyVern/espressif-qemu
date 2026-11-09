@@ -68,7 +68,7 @@ int emulink_write(const char *s, size_t len)
 /* Emit a `tx`: PHY bytes base64-encoded, plus the latched modulation params
  * (freq MHz, sf, bw Hz, cr, power dBm). No-op if the link is not connected, so
  * a standalone boot's radio simply never gets txdone and times out. */
-int emulink_send_tx(const uint8_t *payload, unsigned len, int freq_mhz,
+int emulink_send_tx(const uint8_t *payload, unsigned len, int freq_mhz, uint32_t freq_khz,
                     int sf, int bw_hz, int cr, int power)
 {
     if (!payload || len == 0) {
@@ -76,9 +76,9 @@ int emulink_send_tx(const uint8_t *payload, unsigned len, int freq_mhz,
     }
     g_autofree char *b64 = g_base64_encode(payload, len);
     g_autofree char *line = g_strdup_printf(
-        "{\"t\":\"tx\",\"payload\":\"%s\",\"freq\":%d,\"sf\":%d,\"bw\":%d,"
+        "{\"t\":\"tx\",\"payload\":\"%s\",\"freq\":%d,\"freq_khz\":%u,\"sf\":%d,\"bw\":%d,"
         "\"cr\":%d,\"power\":%d}\n",
-        b64, freq_mhz, sf, bw_hz, cr, power);
+        b64, freq_mhz, freq_khz, sf, bw_hz, cr, power);
     return emulink_write(line, strlen(line));
 }
 

@@ -322,6 +322,11 @@ static void bramble_sx1262_rx_rearm_soon(BrambleSx1262State *s)
     }
 }
 
+static uint32_t bramble_sx1262_khz(const BrambleSx1262State *s)
+{
+    return (uint32_t)((double)s->freq_raw * 32000.0 / 33554432.0 + 0.5);
+}
+
 /* Broker `rx`{payload,rssi,snr,freq}: a frame survived the ether's
  * collision/capture model. Decode + queue it; if nothing is currently latched,
  * present it immediately (RX_DONE + DIO1 edge). The driver's ISR then reads
@@ -334,6 +339,11 @@ static void bramble_sx1262_on_rx(QDict *msg, void *ctx)
     BrambleSx1262State *s = ctx;
     const char *payload = qdict_get_try_str(msg, "payload");
     if (!payload) {
+        return;
+    }
+    /* A receiver tuned elsewhere hears nothing; a frame with no frequency, such as a replay, always lands. */
+    if (qdict_haskey(msg, "freq_khz") && s->freq_raw != 0 &&
+        qdict_get_int(msg, "freq_khz") != (int64_t)bramble_sx1262_khz(s)) {
         return;
     }
     size_t n = 0;
@@ -432,7 +442,7 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
              * DIO1 (bramble_sx1262_on_txdone). If no broker is wired the send
              * no-ops and radio_transmit_raw falls through to its timeout. */
             if (s->tx_len > 0) {
-                emulink_send_tx(s->buffer, s->tx_len, s->tx_freq_mhz,
+                emulink_send_tx(s->buffer, s->tx_len, s->tx_freq_mhz, bramble_sx1262_khz(s),
                                         s->tx_sf, s->tx_bw_hz, s->tx_cr,
                                         s->tx_power);
             }

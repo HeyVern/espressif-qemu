@@ -108,6 +108,7 @@ struct BrambleLr1121State {
     uint8_t rx_len;
 
     int freq_mhz;
+    uint32_t freq_khz;
     int sf;
     int bw_hz;
     int cr;
@@ -218,6 +219,11 @@ static void lr_on_rx(QDict *msg, void *ctx)
 {
     BrambleLr1121State *s = ctx;
     const char *payload = qdict_get_try_str(msg, "payload");
+
+    /* A receiver tuned elsewhere hears nothing; a frame with no frequency, such as a replay, always lands. */
+    if (qdict_haskey(msg, "freq_khz") && s->freq_khz != 0 && qdict_get_int(msg, "freq_khz") != (int64_t)s->freq_khz) {
+        return;
+    }
     if (!payload) {
         return;
     }
@@ -413,6 +419,7 @@ static void lr_execute(BrambleLr1121State *s)
     case LR_SET_RF_FREQUENCY:
         if (n >= 4) {
             s->freq_mhz = (int)((lr_be32(a) + 500000u) / 1000000u);
+            s->freq_khz = (lr_be32(a) + 500u) / 1000u;
         }
         break;
     case LR_SET_MODULATION_PARAMS:
@@ -439,7 +446,7 @@ static void lr_execute(BrambleLr1121State *s)
     case LR_SET_TX:
         s->mode = LR_MODE_TX;
         if (s->tx_len > 0) {
-            emulink_send_tx(s->buffer, s->tx_len, s->freq_mhz, s->sf, s->bw_hz, s->cr, s->power);
+            emulink_send_tx(s->buffer, s->tx_len, s->freq_mhz, s->freq_khz, s->sf, s->bw_hz, s->cr, s->power);
         }
         break;
     case LR_SET_CAD:

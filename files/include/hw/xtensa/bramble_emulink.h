@@ -29,7 +29,7 @@ int emulink_write(const char *s, size_t len);
 
 /* Emit a `tx`: PHY bytes base64-encoded, plus the latched modulation params
  * (freq MHz, sf, bw Hz, cr, power dBm). No-op if the link is not connected. */
-int emulink_send_tx(const uint8_t *payload, unsigned len, int freq_mhz,
+int emulink_send_tx(const uint8_t *payload, unsigned len, int freq_mhz, uint32_t freq_khz,
                     int sf, int bw_hz, int cr, int power);
 
 /* Emit an `fb`: the resolved 1bpp logical framebuffer base64-encoded, plus the
