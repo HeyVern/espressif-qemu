@@ -1,6 +1,6 @@
 --- a/hw/riscv/esp32c3.c
 +++ b/hw/riscv/esp32c3.c
-@@ -148,6 +148,47 @@
+@@ -148,6 +148,52 @@
      return addr >= start && addr < end;
  }
  
@@ -14,6 +14,8 @@
 +#define ESP32C3_SARADC_INT_CLR      0x4c
 +#define ESP32C3_SARADC_DONE         (3u << 30)
 +#define ESP32C3_SARADC_RESULT       2764
++#define ESP32C3_SARADC_TSENS_CTRL   0x58
++#define ESP32C3_SARADC_TSENS_RAW    104  /* tsens_out [7:0]; temperatureRead() converts 104 to about 25 C */
 +
 +static uint32_t esp32c3_saradc_regs[0x100 / 4];
 +
@@ -21,6 +23,9 @@
 +{
 +    if (addr == ESP32C3_SARADC_ADC1_DATA || addr == ESP32C3_SARADC_ADC2_DATA) {
 +        return ESP32C3_SARADC_RESULT;
++    }
++    if (addr == ESP32C3_SARADC_TSENS_CTRL) {
++        return (esp32c3_saradc_regs[addr / 4] & ~0xffu) | ESP32C3_SARADC_TSENS_RAW;
 +    }
 +    return esp32c3_saradc_regs[addr / 4];
 +}

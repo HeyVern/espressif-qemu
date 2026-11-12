@@ -50,6 +50,7 @@
 #define R_SAR_MEAS1_CTRL2   0x00C  /* ADC1 start/done/data */
 #define R_SAR_MEAS2_CTRL2   0x030  /* ADC2 start/done/data */
 #define R_SAR_SLAVE_ADDR1   0x040  /* holds meas_status (idle) [29:22] */
+#define R_SAR_TSENS_CTRL    0x050  /* internal temperature sensor */
 
 #define BRAMBLE_SENS_WINDOW 0x400
 
@@ -62,6 +63,11 @@
  * the 12-bit SAR range; the exact value does not matter to the emulator. */
 #define BRAMBLE_ADC_RAW     2048u
 
+/* temperatureRead() spins on tsens_ready [8], then converts tsens_out [7:0]; 104 reads as about 25 C. */
+#define TSENS_OUT_MASK      0x000000FFu
+#define TSENS_READY         (1u << 8)
+#define BRAMBLE_TSENS_RAW   104u
+
 #define TYPE_BRAMBLE_ADC "bramble.adc"
 OBJECT_DECLARE_SIMPLE_TYPE(BrambleAdcState, BRAMBLE_ADC)
 
@@ -73,6 +79,8 @@ struct BrambleAdcState {
     /* Latched sar_measN_ctrl2 register values (DONE + data after a start). */
     uint32_t meas1;
     uint32_t meas2;
+    /* Writable bits of sar_tsens_ctrl; reads add ready and the fixed output. */
+    uint32_t tsens;
 };
 
 /* Complete a oneshot conversion synchronously: latch DONE and the fixed raw
@@ -98,6 +106,8 @@ static uint64_t bramble_adc_read(void *opaque, hwaddr addr, unsigned int size)
     /* meas_status == 0 means the SAR controller is idle; the driver's
      * pre-start wait loop spins until it reads 0, so answer 0. */
     case R_SAR_SLAVE_ADDR1: return 0;
+    case R_SAR_TSENS_CTRL:
+        return (s->tsens & ~(TSENS_OUT_MASK | TSENS_READY)) | TSENS_READY | BRAMBLE_TSENS_RAW;
     default:                return 0;
     }
 }
@@ -124,6 +134,9 @@ static void bramble_adc_write(void *opaque, hwaddr addr, uint64_t value,
         } else {
             s->meas2 = v;
         }
+        break;
+    case R_SAR_TSENS_CTRL:
+        s->tsens = v;
         break;
     default:
         break;
