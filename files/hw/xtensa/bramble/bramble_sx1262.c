@@ -39,6 +39,8 @@
 #include "hw/xtensa/bramble_gpio.h"
 #include "hw/xtensa/bramble_emulink.h"
 
+#include "bramble_sx1262_virtual.inc"
+
 /* SX1262 SPI op-codes (mirror components/radio/include/sx1262.h). */
 #define SX1262_CMD_SET_SLEEP        0x84
 #define SX1262_CMD_SET_STANDBY      0x80
@@ -123,6 +125,12 @@ OBJECT_DECLARE_SIMPLE_TYPE(BrambleSx1262State, BRAMBLE_SX1262)
 
 struct BrambleSx1262State {
     SSIPeripheral parent_obj;
+    char *chip_library;
+    BrambleVirtualSx1262 *virtual_chip;
+    bool strict_receive;
+    bool rf_lockstep;
+    uint64_t noise_seed;
+    uint32_t stuck_irq_ms;
 
     /* Persistent chip state (survives across transactions). */
     uint8_t regs[SX1262_REGFILE_SIZE];
@@ -192,6 +200,10 @@ static uint8_t bramble_sx1262_status(BrambleSx1262State *s)
 static int bramble_sx1262_set_cs(SSIPeripheral *dev, bool level)
 {
     BrambleSx1262State *s = BRAMBLE_SX1262(dev);
+    if (s->virtual_chip) {
+        virtual_sx1262_cs(s->virtual_chip, level);
+        return 0;
+    }
     if (!level) {
         s->byte_idx = 0;
     }
@@ -419,6 +431,9 @@ static uint16_t bramble_sx1262_irq_read(BrambleSx1262State *s)
 static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
 {
     BrambleSx1262State *s = BRAMBLE_SX1262(dev);
+    if (s->virtual_chip) {
+        return s->virtual_chip->vsx_spi_byte(s->virtual_chip->chip, val);
+    }
     uint8_t in = val & 0xff;
     uint32_t idx = s->byte_idx++;
     uint8_t out = bramble_sx1262_status(s);
@@ -628,6 +643,18 @@ static uint32_t bramble_sx1262_transfer(SSIPeripheral *dev, uint32_t val)
 
 static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
 {
+    BrambleSx1262State *state = BRAMBLE_SX1262(dev);
+    if (state->chip_library && *state->chip_library) {
+        uint64_t seed = state->noise_seed;
+        if (seed == 0) {
+            qemu_guest_getrandom_nofail(&seed, sizeof(seed));
+        }
+        state->virtual_chip = virtual_sx1262_new(state->chip_library,
+            state->dio1_gpio, seed, state->strict_receive,
+            state->stuck_irq_ms, state->rf_lockstep, errp);
+        return;
+    }
+
     /* RadioLib reads the version string at 0x0320 and refuses to init if it
      * does not name the part. Real silicon ships it; a zeroed register file does not. */
     {
@@ -663,7 +690,53 @@ static void bramble_sx1262_realize(SSIPeripheral *dev, Error **errp)
     emulink_on("carrier", bramble_sx1262_on_carrier, s);
 }
 
+static char *bramble_sx1262_counters(Object *obj, Error **errp)
+{
+    BrambleSx1262State *s = BRAMBLE_SX1262(obj);
+    if (!s->virtual_chip) {
+        return g_strdup("{\"backend\":\"legacy\"}");
+    }
+    BrambleVirtualSx1262 *v = s->virtual_chip;
+    vsx_counters c = {0};
+    v->vsx_get_counters(v->chip, &c);
+    return g_strdup_printf(
+        "{\"backend\":\"virtual\",\"irq_reads\":%u,\"busy_ms\":%u,"
+        "\"irq_suppressed\":%u,\"frames_dropped\":%u,\"frames_aborted\":%u,"
+        "\"cad_runs\":%u,\"cad_detections\":%u,\"sync_mismatches\":%u,"
+        "\"params_rejected\":%u,\"rx_packets\":%u,\"crc_errors\":%u,"
+        "\"header_errors\":%u,\"engine_ms\":%u,\"engine_target\":%u,\"virtual_ms\":%" PRId64 "}",
+        c.irq_reads, c.busy_ms, c.irq_suppressed, c.frames_dropped,
+        v->vsx_frames_aborted(v->chip), c.cad_runs, c.cad_detections,
+        c.sync_mismatches, c.params_rejected, c.stat_rx_packets,
+        c.stat_crc_errors, c.stat_header_errors, v->engine_ms, v->engine_target,
+        qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL));
+}
+
+static void bramble_sx1262_instance_init(Object *obj)
+{
+    object_property_add_str(obj, "chip-counters", bramble_sx1262_counters, NULL);
+}
+
+static void bramble_sx1262_reset(DeviceState *dev)
+{
+    BrambleSx1262State *s = BRAMBLE_SX1262(dev);
+    if (s->virtual_chip) {
+        virtual_sx1262_reset(s->virtual_chip);
+    }
+}
+
+static void bramble_sx1262_finalize(Object *obj)
+{
+    BrambleSx1262State *s = BRAMBLE_SX1262(obj);
+    virtual_sx1262_free(s->virtual_chip);
+}
+
 static Property bramble_sx1262_properties[] = {
+    DEFINE_PROP_BOOL("rf-lockstep", BrambleSx1262State, rf_lockstep, false),
+    DEFINE_PROP_STRING("chip-library", BrambleSx1262State, chip_library),
+    DEFINE_PROP_BOOL("strict-receive", BrambleSx1262State, strict_receive, false),
+    DEFINE_PROP_UINT64("noise-seed", BrambleSx1262State, noise_seed, 0),
+    DEFINE_PROP_UINT32("stuck-irq-ms", BrambleSx1262State, stuck_irq_ms, 0),
     DEFINE_PROP_UINT32("dio1-gpio", BrambleSx1262State, dio1_gpio, SX1262_DIO1_GPIO),
     DEFINE_PROP_BOOL("noise-reg", BrambleSx1262State, noise_reg, false),
     DEFINE_PROP_END_OF_LIST(),
@@ -673,6 +746,7 @@ static void bramble_sx1262_class_init(ObjectClass *klass, void *data)
 {
     SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
     device_class_set_props(DEVICE_CLASS(klass), bramble_sx1262_properties);
+    device_class_set_legacy_reset(DEVICE_CLASS(klass), bramble_sx1262_reset);
     k->realize = bramble_sx1262_realize;
     k->transfer = bramble_sx1262_transfer;
     k->set_cs = bramble_sx1262_set_cs;
@@ -684,6 +758,8 @@ static const TypeInfo bramble_sx1262_info = {
     .parent = TYPE_SSI_PERIPHERAL,
     .instance_size = sizeof(BrambleSx1262State),
     .class_init = bramble_sx1262_class_init,
+    .instance_finalize = bramble_sx1262_finalize,
+    .instance_init = bramble_sx1262_instance_init,
 };
 
 static void bramble_sx1262_register_types(void)

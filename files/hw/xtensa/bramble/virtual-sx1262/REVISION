@@ -1,0 +1,4 @@
+MeshBench virtual-sx1262
+705d1a11f40402937c7b8f77f8c04d3f01e8a9f9
+ABI 1.9
+Local change: incomplete ResetStats commands preserve counters.

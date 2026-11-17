@@ -34,13 +34,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build meson libglib2.0-dev libpixman-1-dev \
-            libgcrypt20-dev python3-venv flex bison zstd
+            libgcrypt20-dev python3-venv flex bison zstd g++
 
       - name: Bootstrap patched tree
         run: scripts/bootstrap.sh
 
       - name: Build ${{ matrix.target }}
         run: scripts/build.sh ${{ matrix.target }}
+
+      - name: Verify and build optional SX1262 backend
+        env:
+          STRICT: '1'
+        run: |
+          scripts/build-radio.sh test
+          scripts/build-radio.sh shared
 
       # pc-bios ships the ROMs the machines load at run time, so it travels with
       # the binary rather than being fetched separately.
@@ -52,6 +59,11 @@ jobs:
           cp "$src/build/${{ matrix.binary }}" "$out/"
           cp -r "$src/pc-bios" "$out/"
           cp qemu.lock "$out/"
+          cp build/virtual-sx1262/libvirtualsx1262.so "$out/"
+          mkdir -p "$out/licenses"
+          cp files/hw/xtensa/bramble/virtual-sx1262/LICENSE "$out/licenses/virtual-sx1262-LICENSE"
+          cp files/hw/xtensa/bramble/virtual-sx1262/REVISION "$out/licenses/virtual-sx1262-REVISION"
+          cp files/hw/xtensa/bramble/bramble_ssd1306.c "$out/licenses/bramble_ssd1306.c"
           tar -caf "$out.tar.zst" "$out"
 
       - uses: actions/upload-artifact@v4

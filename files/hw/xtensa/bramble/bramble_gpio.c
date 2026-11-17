@@ -427,6 +427,27 @@ static bool bramble_get_select(Object *o, Error **e) { return bramble_gpio_get_b
 static bool bramble_get_up(Object *o, Error **e)     { return bramble_gpio_get_button(o, "up"); }
 static bool bramble_get_down(Object *o, Error **e)   { return bramble_gpio_get_button(o, "down"); }
 
+static char *bramble_gpio_state(Object *obj, Error **errp)
+{
+    BrambleGpioState *s = BRAMBLE_GPIO(obj);
+    return g_strdup_printf("{\"input\":\"%08x%08x\",\"output\":\"%08x%08x\"}",
+                           s->in[1], s->in[0], s->out[1], s->out[0]);
+}
+
+static void bramble_gpio_drive(Object *obj, const char *value, Error **errp)
+{
+    BrambleGpioState *s = BRAMBLE_GPIO(obj);
+    unsigned pin, level;
+    char extra;
+    if (sscanf(value, "%u:%u%c", &pin, &level, &extra) != 2 ||
+        pin > 48 || level > 1) {
+        error_setg(errp, "gpio-input requires pin:level, pin 0..48 and level 0..1");
+        return;
+    }
+    BrambleButton button = {pin, "external", "gpio-input"};
+    bramble_gpio_inject(s, &button, level == 0);
+}
+
 static void bramble_gpio_instance_init(Object *obj)
 {
     BrambleGpioState *s = BRAMBLE_GPIO(obj);
@@ -434,6 +455,8 @@ static void bramble_gpio_instance_init(Object *obj)
     memory_region_init_io(&s->iomem, obj, &bramble_gpio_ops, s,
                           TYPE_BRAMBLE_GPIO, 0x1000);
 
+    object_property_add_str(obj, "gpio-state", bramble_gpio_state, NULL);
+    object_property_add_str(obj, "gpio-input", NULL, bramble_gpio_drive);
     object_property_add_bool(obj, "select", bramble_get_select, bramble_set_select);
     object_property_add_bool(obj, "up", bramble_get_up, bramble_set_up);
     object_property_add_bool(obj, "down", bramble_get_down, bramble_set_down);

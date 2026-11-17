@@ -118,7 +118,84 @@ Two things to know before touching the machine patches:
   enum.** The two orderings diverge partway down the list: USB-serial-JTAG is input
   96 where the enum says 92, and I2C_EXT0 is 42 where the enum says 39. An interrupt
   wired from the enum is asserted on a line nothing reads, and fails silently.
-- **The I2C buses are left empty on purpose.** Empty means the firmware's 128-address
-  probe NACKs immediately, which is the difference between a 200-second and a
-  6-second boot. A device that ACKs gets initialised for real, and the upstream I2C
-  model then faults the guest on the first data phase.
+- **The I2C buses are empty unless a peripheral is requested.** Unattached
+  addresses NACK immediately. `bramble.oled` attaches a real SSD1306 controller
+  on I2C0 for display-enabled firmware.
+
+## Optional SX1262 chip library
+
+The built-in SX1262 model is the default. An optional MIT-licensed chip library
+provides additional modem settings, receive timing, IRQ diagnostics and fault
+injection. Its source, tests, license and pinned revision are under
+`files/hw/xtensa/bramble/virtual-sx1262/`.
+
+Build and verify the library with a C++17 compiler:
+
+    STRICT=1 scripts/build-radio.sh test
+    scripts/build-radio.sh shared
+
+Select it explicitly on any machine using `bramble.sx1262`:
+
+    -global driver=bramble.sx1262,property=chip-library,value=/absolute/path/libvirtualsx1262.so
+
+Release archives include the library beside the emulator. No library is loaded
+unless `chip-library` is set. Missing symbols, an unreadable library, or an ABI
+other than the pinned 1.9 fail startup with an error. The LR1121 uses its existing
+model independently.
+
+Additional properties on `bramble.sx1262`:
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `noise-seed` | 0 | Zero selects guest entropy; a nonzero value makes radio noise reproducible. |
+| `strict-receive` | false | Require reception throughout the modeled preamble and frame. |
+| `stuck-irq-ms` | 0 | Inject recurring stale detection IRQs; zero disables injection. |
+| `rf-lockstep` | false | Advance a paused, icount-enabled guest to each binary RF engine tick. |
+| `chip-counters` | read only | QOM JSON string with IRQ, CAD, drop, sync-word and receive-error counters. |
+
+SPI, DIO1 and the existing emu-link broker remain the interfaces to the board
+and channel. The adapter runs under the BQL, advances the chip in QEMU virtual
+time, and defers IRQ assertions raised inside an SPI command until after that
+command. System reset recreates the chip and clears its timers and counters.
+
+Transmissions include preamble length, header mode, CRC, configured LDRO, IQ
+inversion and sync word. A compatible broker must preserve these fields and use
+the modem settings for airtime. Older brokers ignore them and retain their own
+airtime defaults. `chip_toa_ms` is the chip's rounded estimate; the broker remains
+responsible for channel scheduling and `txdone`.
+
+Incoming `rx` messages can include `sync_word` and `failure` (1–6, as defined in
+the vendored C ABI) to exercise rejection and receive-error handling. Missing
+metadata retains compatibility with existing replay messages. Frequency, SF,
+bandwidth and IQ inversion are checked when supplied. Ordinary broker loss does
+not automatically become a CRC error.
+
+This is a chip model, not MeshBench's waveform or propagation engine. BUSY stays
+low, receive duty cycling records its periods without sleeping, and strict RX
+can expose clock drift between independently running emulator guests. Leave
+strict RX off for ordinary emu-link regression runs.
+
+## RF engine and device controls
+
+A chardev named `meshbench-radio` selects the binary RF protocol used by the
+MeshBench channel engine. The local chip adapter handles radio frames, TXDONE,
+busy state, failure injection, radio statistics and tick acknowledgements. Use
+`rf-lockstep=on`, `-S` and `-icount shift=3,sleep=off,align=off` together. The
+guest runs to each requested RF tick and pauses before acknowledging it. QOM
+`chip-counters` includes engine and virtual clock measurements.
+
+The sibling bench suite `suites/meshbench/` supplies a launcher translating the
+engine's machine properties into these local models. It selects the bundled
+radio library and preserves the standalone emu-link path.
+
+The GPIO model exposes QOM `gpio-state` for input/output masks and write-only
+`gpio-input` accepting `pin:level` for pins 0–48. This uses the existing input
+and interrupt mechanism. A launcher can map held button events to these writes.
+
+`-device bramble.oled,path=/path/to/panel.sock,address=60,column-offset=0`
+attaches an SSD1306 panel to I2C0. It sends the controller's actual 128×64 page
+framebuffer and power state using the engine's MBF2 panel protocol. The model
+is derived from MeshBench's GPL-2.0-or-later SSD1306 implementation at revision
+`922e9b4bc37dc480a06f9f7bc2e96eefc233c9d6`; its copyright and license notice are
+retained in `bramble_ssd1306.c`. Firmware without display support produces no
+pixels. This panel does not change the LR1121 or nRF52840 peripheral paths.

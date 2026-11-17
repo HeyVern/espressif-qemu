@@ -6,6 +6,7 @@
 # the bramble repo, so adding a model is one line HERE, never a patch to stock
 # QEMU meson. `xtensa_ss` is the source set defined by the parent meson.build.
 xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
+  'bramble_ssd1306.c',
   'bramble_scaffold.c',
   'bramble_attach.c',
   'bramble_gpio.c',
@@ -23,6 +24,7 @@ xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: files(
 # the SX1262 slave use register layouts the esp32c3 shares. Only the machine that
 # attaches them differs.
 riscv_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
+  'bramble_ssd1306.c',
   'bramble_scaffold.c',
   'bramble_gpio.c',
   'bramble_gpspi2.c',
@@ -31,3 +33,6 @@ riscv_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
   'bramble_ssd1680.c',
   'bramble_emulink.c',
 ))
+
+xtensa_ss.add(when: 'CONFIG_XTENSA_ESP32S3', if_true: dependency('gmodule-2.0'))
+riscv_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: dependency('gmodule-2.0'))
